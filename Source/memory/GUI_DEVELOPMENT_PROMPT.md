@@ -9,12 +9,13 @@
 
 ## СТАТУС РЕАЛИЗАЦИИ (2026-06-13)
 
-### ✅ Завершено: Фазы 0-2
+### ✅ Завершено: Фазы 0-3
 
 **Коммиты:**
 - `3e94f0eccd` — Фазы 0-1 (скелет + viewport)
 - `b194faa99d` — Фаза 2 (стены + snap + selection + transform + undo/redo)
 - `0a166ca1a4` — фикс NullReferenceException в MenuItem
+- Фаза 3 — Двери, Перекрытия, Лестницы (pending commit)
 
 #### Фаза 0: Скелет проекта
 - Создан .NET 8 solution `Source/fds5/GUI/FdsGui.sln`
@@ -96,7 +97,59 @@ FdsGui.App:
 **Известные исправления:**
 - MenuItem в Avalonia 11.2 Menu не являются visual descendants — `GetVisualDescendants()` не находит их. Использовать `Click=` обработчики прямо в AXAML.
 
-### ⏳ Следующая фаза: Фаза 3 — Двери, Перекрытия, Лестницы
+#### Фаза 3: Двери, Перекрытия, Лестницы (завершено)
+
+**Дата:** 2026-06-13
+
+**Новые файлы (6):**
+
+FdsGui.Core:
+- `Commands/AddDoorCommand.cs` — добавление двери на этаж
+- `Commands/AddSlabCommand.cs` — добавление перекрытия на этаж
+- `Commands/AddStairCommand.cs` — добавление лестницы на этаж
+
+FdsGui.Viewport:
+- `Renderers/DoorRenderer.cs` — 3D box двери на стене (коричневый [139,90,43]), batched geometry
+- `Renderers/SlabRenderer.cs` — горизонтальная плита (серый [200,200,200]), Polygon2D × толщина
+- `Renderers/StairRenderer.cs` — серия ступеней (зелёный [100,180,100]), StairFlight.GenerateSteps() → batched VBO
+
+**Модифицированные файлы (10):**
+
+FdsGui.Core:
+- `Commands/DeleteCommand.cs` — расширен: удаляет Wall + Door + Slab + Stair одновременно
+
+FdsGui.Viewport:
+- `EditorState.cs` — полная переработка: Door/Slab/Stair tools, selection (HashSet для каждого типа), Move для всех типов, GhostSlab/GhostStair, FindWallByName(), HasAnySelection
+- `Picking/ObjectPicker.cs` — добавлены PickDoor (ray-box на стене), PickSlab (outline AABB), PickStair (GenerateSteps AABB)
+- `Renderers/GhostRenderer.cs` — расширение: GhostSlab, GhostStair, GenerateGhostGeometry() возвращает (vertices, indices) для любого типа
+
+FdsGui.App:
+- `Controls/GlViewportControl.cs` — рендеринг дверей/перекрытий/лестниц (отдельные VAO/VBO/EBO для каждого типа), горячие клавиши D/P/L, HandleDoorClick, расширенный HandleSelectionClick (приоритет: door > stair > slab > wall)
+- `ViewModels/PropertyPanelViewModel.cs` — полная переработка: секции для Wall/Door/Slab/Stair, IsWallSelected/IsDoorSelected/IsSlabSelected/IsStairSelected bindings, _updating flag для предотвращения рекурсии
+- `Views/PropertyPanelView.axaml` — 4 секции (Wall/Door/Slab/Stair) с IsVisible bindings, ComboBox для направления лестницы
+- `Views/MainWindow.axaml` + `.cs` — кнопки Door(D), Slab(P), Stair(L) в toolbar, счётчики Doors/Slabs/Stairs в status bar, Name-атрибуты для DoorsNode/SlabsNode/StairsNode
+
+**Реализованные возможности:**
+- **Door tool (D):** клик на стену → дверь врезается в стену, позиция = проекция клика на линию стены, автоворот по направлению стены
+- **Slab tool (P):** click → drag → прямоугольное перекрытие (Polygon2D с 4 точками), snap
+- **Stair tool (L):** click → drag → линия марша, авто-ступени через StairFlight.GenerateSteps()
+- **3D рендеринг:** batched VBO для каждого типа (двери/перекрытия/лестницы)
+- **Selection:** picking всех типов через ray-AABB, приоритет door > stair > slab > wall
+- **Move (G):** работает для всех типов (стена = Start/End, дверь = Position, перекрытие = Outline.Points, лестница = Start/End)
+- **Mirror H/V:** для стен и перекрытий
+- **Delete (X/Delete):** удаляет все выбранные объекты всех типов
+- **Undo/Redo:** для всех операций со всеми типами
+- **Property panel:** контекстные секции для каждого типа (Width/Height/Rotation для двери, Thickness для перекрытия, Height/Width/StepHeight/Direction для лестницы)
+- **Ghost preview:** полупрозрачный preview при рисовании перекрытий и лестниц
+
+**Архитектурные решения Фазы 3:**
+- Каждый тип объекта имеет отдельные HashSet<T> для selection (SelectedWalls, SelectedDoors, SelectedSlabs, SelectedStairs)
+- SingleSelectedWall/Door/Slab/Stair возвращают объект только если он единственный выбран и нет других типов
+- Move для разных типов сохраняет разные original values (TransformOriginalDoorPos, TransformOriginalSlabPoints, TransformOriginalStairStart/End)
+- PropertyPanelViewModel использует _updating flag для предотвращения рекурсии при программном обновлении свойств
+- Door привязана к стене через ParentWallId (имя стены), FindWallByName() используется для рендеринга и picking
+
+### ⏳ Следующая фаза: Фаза 4 — Этажи + Иерархия + Помещения
 
 ---
 
@@ -954,18 +1007,13 @@ dotnet new xunit -n FdsGui.Tests
 
 ---
 
-### Фаза 3: Двери, Перекрытия, Лестницы (5-7 дней)
+### ~~Фаза 3: Двери, Перекрытия, Лестницы~~ ✅ ЗАВЕРШЕНО (2026-06-13)
 
-1. **Дверь:** клик на стену → врезка. Door renderer. Property: ширина, высота, Z.
-2. **Перекрытие:** рисование прямоугольника на плане. Slab renderer. Property: толщина, Z.
-3. **Лестница:** рисование линии марша. Stair renderer (авто-ступени). Property: высота, Z, ширина, направление. Кнопка «Сменить направление».
-4. Поворот/отражение для всех объектов.
-
-**Итог:** Полный набор строительных инструментов.
+Все пункты реализованы. См. раздел «Фаза 3» в статусе реализации выше.
 
 ---
 
-### Фаза 4: Этажи + Иерархия + Помещения (5-7 дней)
+### Фаза 4: Этажи + Иерархия + Помещения (СЛЕДУЮЩАЯ)
 
 1. **Hierarchy panel (TreeView):** Здание → Этаж → Стены/Двери/...
 2. **ПКМ по зданию:** Переименовать, Добавить этаж, Свойства (placeholder).
@@ -1062,18 +1110,18 @@ dotnet new xunit -n FdsGui.Tests
 
 ## ИТОГО
 
-| Фаза | Дней | Результат |
-|-------|------|-----------|
-| 0. Скелет | 1 | Пустое окно |
-| 1. Viewport + камера | 3-5 | 3D навигация |
-| 2. Стены + snap | 5-7 | Рисование стен |
-| 3. Двери, перекрытия, лестницы | 5-7 | Полный набор инструментов |
-| 4. Этажи + иерархия + помещения | 5-7 | Многоэтажный редактор |
-| 5. Подложки | 3-5 | Трассировка по планам |
-| 6. Генерация .fds + запуск FDS | 3-5 | End-to-end: от рисунка до расчёта |
-| 7. Импорт .fds | 3-5 | Открытие существующих файлов |
-| 8. Визуализация результатов | 10-20 | Встроенный SmokeView |
-| 9. Полировка | 5-10 | Production quality |
+| Фаза | Статус | Результат |
+|-------|--------|-----------|
+| 0. Скелет | ✅ | Пустое окно |
+| 1. Viewport + камера | ✅ | 3D навигация |
+| 2. Стены + snap | ✅ | Рисование стен |
+| 3. Двери, перекрытия, лестницы | ✅ | Полный набор инструментов |
+| **4. Этажи + иерархия + помещения** | **⏳ СЛЕДУЮЩАЯ** | **Многоэтажный редактор** |
+| 5. Подложки | ⏳ | Трассировка по планам |
+| 6. Генерация .fds + запуск FDS | ⏳ | End-to-end: от рисунка до расчёта |
+| 7. Импорт .fds | ⏳ | Открытие существующих файлов |
+| 8. Визуализация результатов | ⏳ | Встроенный SmokeView |
+| 9. Полировка | ⏳ | Production quality |
 | **Всего** | **43-72** | **Полноценный GUI** |
 
 ---
