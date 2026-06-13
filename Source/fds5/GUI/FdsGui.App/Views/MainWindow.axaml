@@ -1,0 +1,137 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="using:FdsGui.App.Controls"
+        x:Class="FdsGui.App.Views.MainWindow"
+        Title="FDS Building Editor"
+        Width="1400" Height="900"
+        MinWidth="800" MinHeight="600">
+
+    <DockPanel>
+        <!-- Menu Bar -->
+        <Menu DockPanel.Dock="Top">
+            <MenuItem Header="_File">
+                <MenuItem Header="_New" InputGesture="Ctrl+N"/>
+                <MenuItem Header="_Open..." InputGesture="Ctrl+O"/>
+                <Separator/>
+                <MenuItem Header="_Save" InputGesture="Ctrl+S"/>
+                <MenuItem Header="Save _As..." InputGesture="Ctrl+Shift+S"/>
+                <Separator/>
+                <MenuItem Header="E_xport">
+                    <MenuItem Header="Export .fds"/>
+                </MenuItem>
+                <Separator/>
+                <MenuItem Header="Project _Settings..."/>
+                <Separator/>
+                <MenuItem Header="E_xit" InputGesture="Alt+F4"/>
+            </MenuItem>
+            <MenuItem Header="_Edit">
+                <MenuItem Header="_Undo" InputGesture="Ctrl+Z"/>
+                <MenuItem Header="_Redo" InputGesture="Ctrl+Shift+Z"/>
+                <Separator/>
+                <MenuItem Header="_Delete" InputGesture="Delete"/>
+                <MenuItem Header="D_uplicate" InputGesture="Ctrl+D"/>
+                <Separator/>
+                <MenuItem Header="Select _All" InputGesture="Ctrl+A"/>
+            </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="Fit _All" InputGesture="Home"/>
+                <MenuItem Header="_Top View" InputGesture="NumPad7"/>
+                <MenuItem Header="_Front View" InputGesture="NumPad1"/>
+                <MenuItem Header="_Right View" InputGesture="NumPad3"/>
+                <Separator/>
+                <MenuItem Header="Toggle _Perspective/Ortho" InputGesture="NumPad5"/>
+                <Separator/>
+                <MenuItem Header="_Snap to Grid" InputGesture="F4" IsChecked="True"/>
+            </MenuItem>
+            <MenuItem Header="_Simulate">
+                <MenuItem Header="_Run Simulation" InputGesture="F5"/>
+                <MenuItem Header="_Stop"/>
+                <Separator/>
+                <MenuItem Header="View _Results"/>
+            </MenuItem>
+            <MenuItem Header="_Help">
+                <MenuItem Header="_Keyboard Shortcuts" InputGesture="F1"/>
+                <MenuItem Header="_About"/>
+            </MenuItem>
+        </Menu>
+
+        <!-- Toolbar -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4,2">
+            <Button Content="New" Margin="2,0"/>
+            <Button Content="Open" Margin="2,0"/>
+            <Button Content="Save" Margin="2,0"/>
+            <Separator/>
+            <Button Content="▶ Run" Margin="2,0" Classes="accent"/>
+            <Button Content="⏹ Stop" Margin="2,0"/>
+            <Button Content="👁 Results" Margin="2,0"/>
+            <Separator/>
+            <Button Content="✓ Validate" Margin="2,0"/>
+        </StackPanel>
+
+        <!-- Status Bar -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4,2">
+            <TextBlock Text="Ready" Name="StatusText"/>
+            <TextBlock Text="  |  Mesh cells: ~0" Name="MeshInfo" Margin="20,0,0,0"/>
+        </StackPanel>
+
+        <!-- Main Content: 3-panel layout -->
+        <Grid ColumnDefinitions="250,*,280">
+
+            <!-- Left Panel: Hierarchy Tree -->
+            <Border Grid.Column="0" BorderBrush="Gray" BorderThickness="1" Margin="2">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Hierarchy" FontWeight="Bold" Margin="8,4"/>
+                    <TreeView Name="HierarchyTree">
+                        <TreeViewItem Header="🏢 Building" IsExpanded="True">
+                            <TreeViewItem Header="📐 Floor 1" IsExpanded="True">
+                                <TreeViewItem Header="🧱 Walls"/>
+                                <TreeViewItem Header="🚪 Doors"/>
+                                <TreeViewItem Header="⬜ Slabs"/>
+                                <TreeViewItem Header="🪜 Stairs"/>
+                                <TreeViewItem Header="🏠 Rooms"/>
+                            </TreeViewItem>
+                        </TreeViewItem>
+                    </TreeView>
+                </DockPanel>
+            </Border>
+
+            <!-- Center: Viewport placeholder -->
+            <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" Margin="2">
+                <DockPanel>
+                    <!-- Viewport toolbar -->
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4,2">
+                        <Button Content="🔄 Pan" Margin="2,0"/>
+                        <Button Content="🔍+" Margin="2,0"/>
+                        <Button Content="🔍-" Margin="2,0"/>
+                        <Button Content="↻ Rotate" Margin="2,0"/>
+                        <Button Content="🏠 Iso" Margin="2,0"/>
+                        <Separator/>
+                        <Button Content="🧱 Wall" Margin="2,0"/>
+                        <Button Content="🚪 Door" Margin="2,0"/>
+                        <Button Content="⬜ Slab" Margin="2,0"/>
+                        <Button Content="🪜 Stair" Margin="2,0"/>
+                        <Button Content="🏠 Room" Margin="2,0"/>
+                        <Separator/>
+                        <Button Content="📐 Snap: ON" Margin="2,0" Name="SnapToggle"/>
+                    </StackPanel>
+
+                    <!-- Viewport area -->
+                    <controls:GlViewportControl Margin="0,4,0,0"/>
+                </DockPanel>
+            </Border>
+
+            <!-- Right Panel: Properties -->
+            <Border Grid.Column="2" BorderBrush="Gray" BorderThickness="1" Margin="2">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top" Text="Properties" FontWeight="Bold" Margin="8,4"/>
+                    <ScrollViewer>
+                        <StackPanel Margin="8,4">
+                            <TextBlock Text="Select an object to view properties"
+                                       Foreground="Gray" FontStyle="Italic"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Grid>
+    </DockPanel>
+</Window>
