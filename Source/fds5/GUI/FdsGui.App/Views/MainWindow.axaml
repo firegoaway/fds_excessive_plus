@@ -26,10 +26,10 @@
                 <MenuItem Header="E_xit" InputGesture="Alt+F4"/>
             </MenuItem>
             <MenuItem Header="_Edit">
-                <MenuItem Header="_Undo" InputGesture="Ctrl+Z" Name="MenuUndo"/>
-                <MenuItem Header="_Redo" InputGesture="Ctrl+Shift+Z" Name="MenuRedo"/>
+                <MenuItem Header="_Undo" InputGesture="Ctrl+Z" Click="OnMenuUndo"/>
+                <MenuItem Header="_Redo" InputGesture="Ctrl+Shift+Z" Click="OnMenuRedo"/>
                 <Separator/>
-                <MenuItem Header="_Delete" InputGesture="Delete" Name="MenuDelete"/>
+                <MenuItem Header="_Delete" InputGesture="Delete" Click="OnMenuDelete"/>
                 <MenuItem Header="D_uplicate" InputGesture="Ctrl+D"/>
                 <Separator/>
                 <MenuItem Header="Select _All" InputGesture="Ctrl+A"/>
@@ -42,7 +42,7 @@
                 <Separator/>
                 <MenuItem Header="Toggle _Perspective/Ortho" InputGesture="NumPad5"/>
                 <Separator/>
-                <MenuItem Header="_Snap to Grid" InputGesture="F4" Name="MenuSnapToggle"/>
+                <MenuItem Header="_Snap to Grid" InputGesture="F4" Click="OnMenuSnapToggle"/>
             </MenuItem>
             <MenuItem Header="_Simulate">
                 <MenuItem Header="_Run Simulation" InputGesture="F5"/>

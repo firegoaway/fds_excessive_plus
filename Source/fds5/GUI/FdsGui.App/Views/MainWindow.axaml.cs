@@ -1,4 +1,3 @@
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
@@ -36,7 +35,6 @@ public partial class MainWindow : Window
             viewport.Editor = Editor;
 
         WireButtons();
-        WireMenus();
 
         Editor.SelectionChanged += UpdateStatusBar;
         Editor.ToolChanged += UpdateStatusBar;
@@ -63,13 +61,11 @@ public partial class MainWindow : Window
         Find<Button>("BtnGridMinus")!.Click += (_, _) => ToolbarVM.DecreaseGridStep();
     }
 
-    private void WireMenus()
-    {
-        Find<MenuItem>("MenuUndo")!.Click += (_, _) => Editor.Undo();
-        Find<MenuItem>("MenuRedo")!.Click += (_, _) => Editor.Redo();
-        Find<MenuItem>("MenuDelete")!.Click += (_, _) => Editor.DeleteSelected();
-        Find<MenuItem>("MenuSnapToggle")!.Click += (_, _) => ToolbarVM.ToggleSnap();
-    }
+    // Menu Click handlers (defined in AXAML)
+    private void OnMenuUndo(object? sender, RoutedEventArgs e) => Editor.Undo();
+    private void OnMenuRedo(object? sender, RoutedEventArgs e) => Editor.Redo();
+    private void OnMenuDelete(object? sender, RoutedEventArgs e) => Editor.DeleteSelected();
+    private void OnMenuSnapToggle(object? sender, RoutedEventArgs e) => ToolbarVM.ToggleSnap();
 
     private void UpdateStatusBar()
     {
