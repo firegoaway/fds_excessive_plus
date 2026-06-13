@@ -57,8 +57,8 @@ public class GlViewportControl : OpenGlControlBase
     private bool _isDragging;
     private const double DragThreshold = 5.0;
 
-    private const string VertexShaderSource = @"
-#version 330 core
+    private const string VertexShaderSource = @"#version 300 es
+precision mediump float;
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec4 aColor;
 out vec4 vColor;
@@ -66,8 +66,8 @@ uniform mat4 uMVP;
 void main() { gl_Position = uMVP * vec4(aPos, 1.0); vColor = aColor; }
 ";
 
-    private const string FragmentShaderSource = @"
-#version 330 core
+    private const string FragmentShaderSource = @"#version 300 es
+precision mediump float;
 in vec4 vColor;
 out vec4 FragColor;
 void main() { FragColor = vColor; }
