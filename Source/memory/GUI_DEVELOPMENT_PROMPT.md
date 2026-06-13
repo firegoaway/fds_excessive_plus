@@ -97,7 +97,7 @@ dotnet run --project Source/fds5/GUI/FdsGui.App/FdsGui.App.csproj
 FDS5 source:        Source/fds5/
 FDS6 reference:     Source/*.f90
 Build:              Build/
-SmokeView source:   Source/smv6/              ← ИЗУЧИТЬ ГЛУБОКО (см. ниже)
+SmokeView source:   Source/smv/               ← ИЗУЧИТЬ ГЛУБОКО (см. ниже)
 FDS5 executable:    Build/impi_intel_win/fds5_impi_intel_win.exe
 SmokeView:          D:\progz\Fenix+ 3.6.0.2\FDS6\smokeview.exe
 Intel oneAPI:       D:\Intel\oneAPI\
@@ -111,7 +111,7 @@ GUI build output:   Build/win_GUI/            ← КОМПИЛЯЦИЯ GUI
 
 ## ИСХОДНЫЙ КОД SMOKEVIEW — ОБЯЗАТЕЛЬНО К ИЗУЧЕНИЮ
 
-**Расположение:** `E:\FIREGOAWAY\GitHub\FDS_source\FIREMODELS\fds\Source\smv6`
+**Расположение:** `E:\FIREGOAWAY\GitHub\FDS_source\FIREMODELS\fds\Source\smv`
 
 ### Что изучить и зачем
 
@@ -576,7 +576,7 @@ MESH (автоматически):
     - Colorbar (шкала значений)
 ```
 
-**Приоритет:** Сначала — внешний запуск SmokeView. Встроенный viewer — отдельная большая задача, основанная на глубоком изучении исходников smv6.
+**Приоритет:** Сначала — внешний запуск SmokeView. Встроенный viewer — отдельная большая задача, основанная на глубоком изучении исходников smv.
 
 ---
 
@@ -971,9 +971,9 @@ dotnet new xunit -n FdsGui.Tests
 
 ### Фаза 8: Визуализация результатов (10-20 дней)
 
-**Предварительное условие:** Глубокое изучение исходного кода SmokeView (`Source/smv6/`).
+**Предварительное условие:** Глубокое изучение исходного кода SmokeView (`Source/smv/`).
 
-1. **Изучить smv6 source:**
+1. **Изучить smv source:**
    - Парсеры: ReadSMV, ReadSlice, ReadSmoke3D, ReadBoundary, ReadIso
    - Рендеринг: DrawSmoke, DrawSlice, DrawIso, DrawBoundary
    - Colormap'ы и colorbar
@@ -1043,7 +1043,7 @@ dotnet new xunit -n FdsGui.Tests
 - [OpenTK](https://opentk.net/learn/index.html)
 - [CommunityToolkit.Mvvm](https://learn.microsoft.com/en-us/dotnet/communitytoolkit/mvvm/)
 - [FDS GitHub](https://github.com/firemodels/fds)
-- SmokeView source: `Source/smv6/`
+- SmokeView source: `Source/smv/`
 - FDS5 source: `Source/fds5/`
 
 ---
