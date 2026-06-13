@@ -81,6 +81,8 @@
             <Button Content="Mirror H" Margin="2,0" Name="BtnMirrorH"/>
             <Button Content="Mirror V" Margin="2,0" Name="BtnMirrorV"/>
             <Separator/>
+            <Button Content="BG" Margin="2,0" Name="BtnBgToggle" ToolTip.Tip="Toggle Backgrounds"/>
+            <Separator/>
             <Button Content="Snap: ON" Margin="2,0" Name="BtnSnapToggle"/>
             <Button Content="Grid+" Margin="2,0" Name="BtnGridPlus"/>
             <Button Content="Grid-" Margin="2,0" Name="BtnGridMinus"/>
@@ -95,6 +97,7 @@
             <TextBlock Text="  |  Slabs: 0" Name="SlabCount" Margin="20,0,0,0"/>
             <TextBlock Text="  |  Stairs: 0" Name="StairCount" Margin="20,0,0,0"/>
             <TextBlock Text="  |  Rooms: 0" Name="RoomCount" Margin="20,0,0,0"/>
+            <TextBlock Text="  |  BG: 0" Name="BgCount" Margin="20,0,0,0"/>
             <TextBlock Text="  |  Grid: 0.5m" Name="GridInfo" Margin="20,0,0,0"/>
         </StackPanel>
 

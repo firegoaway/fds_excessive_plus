@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
 using FdsGui.App.Controls;
 using FdsGui.App.ViewModels;
@@ -70,6 +71,13 @@ public partial class MainWindow : Window
 
         Find<Button>("BtnAddFloor")!.Click += (_, _) => { Editor.AddFloor(); UpdateStatusBar(); };
         Find<Button>("BtnShowAllFloors")!.Click += (_, _) => { Editor.ShowAllFloors(); UpdateStatusBar(); };
+        Find<Button>("BtnBgToggle")!.Click += (_, _) =>
+        {
+            Editor.ShowBackgrounds = !Editor.ShowBackgrounds;
+            Editor.BackgroundsDirty = true;
+            var btn = Find<Button>("BtnBgToggle");
+            if (btn != null) btn.Content = Editor.ShowBackgrounds ? "BG" : "BG (off)";
+        };
     }
 
     private void OnMenuUndo(object? sender, RoutedEventArgs e) => Editor.Undo();
@@ -118,6 +126,37 @@ public partial class MainWindow : Window
 
             // Floor context menu
             var floorMenu = new ContextMenu();
+            floorMenu.Items.Add(CreateMenuItem("Add Background...", async (_, _) =>
+            {
+                var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Select background image",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("Images") { Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp" } }
+                    }
+                });
+                if (files.Count > 0)
+                {
+                    var filePath = files[0].Path.LocalPath;
+                    var bg = new Background
+                    {
+                        Name = Path.GetFileName(filePath),
+                        ImagePath = filePath,
+                        RealWidth = 10.0,
+                        RealHeight = 8.0,
+                        Opacity = 0.5,
+                        Visible = true,
+                        Origin = new Point2D(0, 0)
+                    };
+                    floor.Backgrounds.Add(bg);
+                    Editor.BackgroundsDirty = true;
+                    RebuildTreeView();
+                    UpdateStatusBar();
+                }
+            }));
+            floorMenu.Items.Add(new Separator());
             floorMenu.Items.Add(CreateMenuItem("Properties...", (_, _) => ShowFloorProperties(floor)));
             floorMenu.Items.Add(CreateMenuItem("Rename...", (_, _) => ShowRenameDialog(floor)));
             floorMenu.Items.Add(new Separator());
@@ -148,12 +187,40 @@ public partial class MainWindow : Window
             };
 
             // Child category nodes
+            var bgsNode = new TreeViewItem { Header = $"🖼️ Backgrounds ({floor.Backgrounds.Count})", Tag = "backgrounds" };
+            foreach (var bg in floor.Backgrounds)
+            {
+                var bgItem = new TreeViewItem { Header = bg.Name, Tag = bg };
+                var bgMenu = new ContextMenu();
+                var bgRef = bg;
+                bgMenu.Items.Add(CreateMenuItem("Properties", (_, _) =>
+                {
+                    Editor.SelectBackground(bgRef);
+                }));
+                bgMenu.Items.Add(CreateMenuItem("Delete", (_, _) =>
+                {
+                    floor.Backgrounds.Remove(bgRef);
+                    Editor.BackgroundsDirty = true;
+                    Editor.SelectBackground(null);
+                    RebuildTreeView();
+                    UpdateStatusBar();
+                }));
+                bgItem.ContextMenu = bgMenu;
+                bgItem.PointerPressed += (_, args) =>
+                {
+                    if (args.GetCurrentPoint(bgItem).Properties.IsLeftButtonPressed)
+                        Editor.SelectBackground(bgRef);
+                };
+                bgsNode.Items.Add(bgItem);
+            }
+
             var wallsNode = new TreeViewItem { Header = $"🧱 Walls ({floor.Walls.Count})", Tag = "walls" };
             var doorsNode = new TreeViewItem { Header = $"🚪 Doors ({floor.Doors.Count})", Tag = "doors" };
             var slabsNode = new TreeViewItem { Header = $"⬛ Slabs ({floor.Slabs.Count})", Tag = "slabs" };
             var stairsNode = new TreeViewItem { Header = $"🪜 Stairs ({floor.Stairs.Count})", Tag = "stairs" };
             var roomsNode = new TreeViewItem { Header = $"🏠 Rooms ({floor.Rooms.Count})", Tag = "rooms" };
 
+            floorNode.Items.Add(bgsNode);
             floorNode.Items.Add(wallsNode);
             floorNode.Items.Add(doorsNode);
             floorNode.Items.Add(slabsNode);
@@ -258,6 +325,7 @@ public partial class MainWindow : Window
         var slabCount = Find<TextBlock>("SlabCount");
         var stairCount = Find<TextBlock>("StairCount");
         var roomCount = Find<TextBlock>("RoomCount");
+        var bgCount = Find<TextBlock>("BgCount");
         var gridInfo = Find<TextBlock>("GridInfo");
 
         if (statusText != null)
@@ -274,6 +342,8 @@ public partial class MainWindow : Window
             stairCount.Text = $"  |  Stairs: {Editor.ActiveFloor.Stairs.Count}";
         if (roomCount != null)
             roomCount.Text = $"  |  Rooms: {Editor.ActiveFloor.Rooms.Count}";
+        if (bgCount != null)
+            bgCount.Text = $"  |  BG: {Editor.ActiveFloor.Backgrounds.Count}";
         if (gridInfo != null)
             gridInfo.Text = $"  |  Grid: {Editor.SnapEngine.GridStep}m";
     }

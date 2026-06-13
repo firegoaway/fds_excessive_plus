@@ -37,6 +37,10 @@ public class GlViewportControl : OpenGlControlBase
     private int _roomVao, _roomVbo, _roomEbo, _roomIndexCount;
     // Room outline GL resources
     private int _roomOutlineVao, _roomOutlineVbo;
+    // Background GL resources
+    private int _bgVao, _bgVbo, _bgEbo, _bgIndexCount;
+    // Background outline GL resources
+    private int _bgOutlineVao, _bgOutlineVbo;
 
     // Ghost GL resources
     private int _ghostVao, _ghostVbo, _ghostEbo;
@@ -127,6 +131,8 @@ void main() { FragColor = vColor; }
         _stairVao = GL.GenVertexArray(); _stairVbo = GL.GenBuffer(); _stairEbo = GL.GenBuffer();
         _roomVao = GL.GenVertexArray(); _roomVbo = GL.GenBuffer(); _roomEbo = GL.GenBuffer();
         _roomOutlineVao = GL.GenVertexArray(); _roomOutlineVbo = GL.GenBuffer();
+        _bgVao = GL.GenVertexArray(); _bgVbo = GL.GenBuffer(); _bgEbo = GL.GenBuffer();
+        _bgOutlineVao = GL.GenVertexArray(); _bgOutlineVbo = GL.GenBuffer();
 
         // Ghost / Selection / Handle
         _ghostVao = GL.GenVertexArray(); _ghostVbo = GL.GenBuffer(); _ghostEbo = GL.GenBuffer();
@@ -141,10 +147,12 @@ void main() { FragColor = vColor; }
         if (!_initialized) return;
         foreach (var buf in new[] { _gridVbo, _axisVbo, _wallVbo, _wallEbo, _doorVbo, _doorEbo,
             _slabVbo, _slabEbo, _stairVbo, _stairEbo, _roomVbo, _roomEbo, _roomOutlineVbo,
+            _bgVbo, _bgEbo, _bgOutlineVbo,
             _ghostVbo, _ghostEbo, _outlineVbo, _handleVbo, _handleEbo })
             GL.DeleteBuffer(buf);
         foreach (var vao in new[] { _gridVao, _axisVao, _wallVao, _doorVao, _slabVao, _stairVao,
-            _roomVao, _roomOutlineVao, _ghostVao, _outlineVao, _handleVao })
+            _roomVao, _roomOutlineVao, _bgVao, _bgOutlineVao,
+            _ghostVao, _outlineVao, _handleVao })
             GL.DeleteVertexArray(vao);
         GL.DeleteProgram(_shaderProgram);
         _initialized = false;
@@ -184,6 +192,7 @@ void main() { FragColor = vColor; }
         // 3. Objects
         if (Editor != null)
         {
+            RenderBackgrounds();
             RenderWalls();
             RenderDoors();
             RenderSlabs();
@@ -194,6 +203,27 @@ void main() { FragColor = vColor; }
         }
 
         GL.BindVertexArray(0);
+    }
+
+    private void RenderBackgrounds()
+    {
+        if (Editor == null || !Editor.ShowBackgrounds) return;
+        var bgs = Editor.VisibleBackgrounds.ToList();
+        if (bgs.Count == 0) { _bgIndexCount = 0; return; }
+
+        if (Editor.BackgroundsDirty || _bgIndexCount == 0)
+        {
+            var (v, i) = BackgroundRenderer.GenerateBatchedGeometry(bgs);
+            _bgIndexCount = i.Length;
+            if (v.Length > 0) UploadBuffer(_bgVao, _bgVbo, _bgEbo, v, i);
+            Editor.BackgroundsDirty = false;
+        }
+
+        if (_bgIndexCount > 0)
+        {
+            GL.BindVertexArray(_bgVao);
+            GL.DrawElements(PrimitiveType.Triangles, _bgIndexCount, DrawElementsType.UnsignedShort, 0);
+        }
     }
 
     private void RenderWalls()
@@ -360,6 +390,26 @@ void main() { FragColor = vColor; }
                 var edgeIndices = RoomRenderer.GenerateOutlineEdgeIndices(room.Outline.Points.Count);
                 GL.BindVertexArray(_roomOutlineVao);
                 GL.BindBuffer(BufferTarget.ArrayBuffer, _roomOutlineVbo);
+                GL.BufferData(BufferTarget.ArrayBuffer, outlineVerts.Length * sizeof(float), outlineVerts, BufferUsageHint.DynamicDraw);
+                SetupVertexAttribs();
+                GL.LineWidth(2.0f);
+                GL.DrawElements(PrimitiveType.Lines, edgeIndices.Length, DrawElementsType.UnsignedShort, 0);
+                GL.LineWidth(1.0f);
+                GL.BindVertexArray(0);
+            }
+        }
+
+        // Background selection
+        foreach (var bg in Editor.SelectedBackgrounds)
+        {
+            var floor = Editor.FindFloorForBackground(bg);
+            if (floor == null) continue;
+            var outlineVerts = BackgroundRenderer.GenerateOutlineVertices(bg, floor.Level);
+            if (outlineVerts.Length > 0)
+            {
+                var edgeIndices = BackgroundRenderer.GetOutlineLineIndices();
+                GL.BindVertexArray(_bgOutlineVao);
+                GL.BindBuffer(BufferTarget.ArrayBuffer, _bgOutlineVbo);
                 GL.BufferData(BufferTarget.ArrayBuffer, outlineVerts.Length * sizeof(float), outlineVerts, BufferUsageHint.DynamicDraw);
                 SetupVertexAttribs();
                 GL.LineWidth(2.0f);
@@ -666,6 +716,10 @@ void main() { FragColor = vColor; }
             var cy = room.Outline.Points.Average(p => p.Y);
             Editor.BeginMove(new Point2D(cx, cy));
         }
+        else if (Editor.SingleSelectedBackground is { } bg)
+        {
+            Editor.BeginMove(new Point2D(bg.Origin.X + bg.RealWidth / 2, bg.Origin.Y + bg.RealHeight / 2));
+        }
     }
 
     public void StartRotate()
@@ -720,7 +774,7 @@ void main() { FragColor = vColor; }
         Matrix4 view = Camera.GetViewMatrix();
         Matrix4 proj = Camera.GetProjectionMatrix();
 
-        // Try picking in priority order: door > stair > slab > room > wall
+        // Try picking in priority order: door > stair > slab > room > wall > background
         var door = ObjectPicker.PickDoor(screenPos.X, screenPos.Y, w, h, view, proj, Editor.VisibleDoors, Editor.FindWallByName);
         if (door != null) { Editor.SelectDoor(door, addToSelection); return; }
 
@@ -734,7 +788,11 @@ void main() { FragColor = vColor; }
         if (room != null) { Editor.SelectRoom(room, addToSelection); return; }
 
         var wall = ObjectPicker.PickWall(screenPos.X, screenPos.Y, w, h, view, proj, Editor.VisibleWalls);
-        Editor.SelectWall(wall, addToSelection);
+        if (wall != null) { Editor.SelectWall(wall, addToSelection); return; }
+
+        // Lowest priority: background
+        var bg = ObjectPicker.PickBackground(screenPos.X, screenPos.Y, w, h, view, proj, Editor.VisibleBackgrounds);
+        Editor.SelectBackground(bg, addToSelection);
     }
 
     private static int CompileShader(ShaderType type, string source)

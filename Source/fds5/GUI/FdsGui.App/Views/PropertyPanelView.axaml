@@ -140,6 +140,43 @@
                     </StackPanel>
                 </StackPanel>
 
+                <!-- === Background section === -->
+                <StackPanel IsVisible="{Binding IsBackgroundSelected}">
+                    <TextBlock Text="Background" FontWeight="Bold" FontSize="14"/>
+                    <StackPanel>
+                        <TextBlock Text="Name" FontSize="11" Foreground="Gray"/>
+                        <TextBox Text="{Binding BgName}" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Real Width (m)" FontSize="11" Foreground="Gray"/>
+                        <NumericUpDown Value="{Binding BgRealWidth}" Minimum="0.1" Maximum="1000" Increment="0.5" FormatString="F2" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Real Height (m)" FontSize="11" Foreground="Gray"/>
+                        <NumericUpDown Value="{Binding BgRealHeight}" Minimum="0.1" Maximum="1000" Increment="0.5" FormatString="F2" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Origin X (m)" FontSize="11" Foreground="Gray"/>
+                        <NumericUpDown Value="{Binding BgOriginX}" Minimum="-1000" Maximum="1000" Increment="0.1" FormatString="F2" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Origin Y (m)" FontSize="11" Foreground="Gray"/>
+                        <NumericUpDown Value="{Binding BgOriginY}" Minimum="-1000" Maximum="1000" Increment="0.1" FormatString="F2" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Rotation (deg)" FontSize="11" Foreground="Gray"/>
+                        <NumericUpDown Value="{Binding BgRotation}" Minimum="-360" Maximum="360" Increment="1" FormatString="F1" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Opacity (0-1)" FontSize="11" Foreground="Gray"/>
+                        <NumericUpDown Value="{Binding BgOpacity}" Minimum="0" Maximum="1" Increment="0.05" FormatString="F2" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Image Path" FontSize="11" Foreground="Gray"/>
+                        <TextBox Text="{Binding BgImagePath}" IsReadOnly="True" />
+                    </StackPanel>
+                </StackPanel>
+
                 <!-- Common action buttons -->
                 <Separator Margin="0,8"/>
                 <TextBlock Text="Transform" FontWeight="Bold" FontSize="12"/>

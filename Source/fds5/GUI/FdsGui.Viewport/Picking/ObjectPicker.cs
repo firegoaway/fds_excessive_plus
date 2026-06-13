@@ -162,6 +162,33 @@ public class ObjectPicker
         return nearest;
     }
 
+    public static Background? PickBackground(double screenX, double screenY, int viewportWidth, int viewportHeight,
+        Matrix4 view, Matrix4 projection, IEnumerable<(Background bg, double floorLevel)> backgrounds)
+    {
+        var ray = ScreenToRay(screenX, screenY, viewportWidth, viewportHeight, view, projection);
+
+        Background? nearest = null;
+        float nearestDist = float.MaxValue;
+
+        foreach (var (bg, floorLevel) in backgrounds)
+        {
+            double z = floorLevel - 0.02;
+            double x1 = bg.Origin.X, y1 = bg.Origin.Y;
+            double x2 = bg.Origin.X + bg.RealWidth, y2 = bg.Origin.Y + bg.RealHeight;
+
+            var min = new Vector3((float)Math.Min(x1, x2), (float)Math.Min(y1, y2), (float)z);
+            var max = new Vector3((float)Math.Max(x1, x2), (float)Math.Max(y1, y2), (float)(z + 0.04));
+            float? dist = RayBoxIntersect(ray, min, max);
+            if (dist.HasValue && dist.Value < nearestDist)
+            {
+                nearestDist = dist.Value;
+                nearest = bg;
+            }
+        }
+
+        return nearest;
+    }
+
     private static double[] GetDoorBoundingBox(Door door, Wall wall)
     {
         var dir = wall.Direction;

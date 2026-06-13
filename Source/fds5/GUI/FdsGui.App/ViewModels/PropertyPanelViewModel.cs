@@ -55,6 +55,18 @@ public partial class PropertyPanelViewModel : ObservableObject
     [ObservableProperty] private string _roomMode = "Manual";
     [ObservableProperty] private bool _isRoomSelected;
 
+    // Background properties
+    [ObservableProperty] private Background? _selectedBackground;
+    [ObservableProperty] private string _bgName = "";
+    [ObservableProperty] private double _bgRealWidth = 10.0;
+    [ObservableProperty] private double _bgRealHeight = 8.0;
+    [ObservableProperty] private double _bgOriginX;
+    [ObservableProperty] private double _bgOriginY;
+    [ObservableProperty] private double _bgRotation;
+    [ObservableProperty] private double _bgOpacity = 0.5;
+    [ObservableProperty] private string _bgImagePath = "";
+    [ObservableProperty] private bool _isBackgroundSelected;
+
     [ObservableProperty] private bool _hasSelection;
     [ObservableProperty] private string _placeholderText = "Select an object to view properties";
 
@@ -75,9 +87,9 @@ public partial class PropertyPanelViewModel : ObservableObject
         try
         {
             IsWallSelected = false; IsDoorSelected = false; IsSlabSelected = false;
-            IsStairSelected = false; IsRoomSelected = false;
+            IsStairSelected = false; IsRoomSelected = false; IsBackgroundSelected = false;
             SelectedWall = null; SelectedDoor = null; SelectedSlab = null;
-            SelectedStair = null; SelectedRoom = null;
+            SelectedStair = null; SelectedRoom = null; SelectedBackground = null;
 
             if (_editor.SingleSelectedWall is { } wall)
             {
@@ -126,6 +138,19 @@ public partial class PropertyPanelViewModel : ObservableObject
                 RoomTopZ = room.TopZ;
                 RoomPointCount = room.Outline.Points.Count;
                 RoomMode = room.Mode == RoomCreationMode.AutoFromWalls ? "Auto" : "Manual";
+                PlaceholderText = "";
+            }
+            else if (_editor.SingleSelectedBackground is { } bg)
+            {
+                IsBackgroundSelected = true; SelectedBackground = bg; HasSelection = true;
+                BgName = bg.Name;
+                BgRealWidth = bg.RealWidth;
+                BgRealHeight = bg.RealHeight;
+                BgOriginX = bg.Origin.X;
+                BgOriginY = bg.Origin.Y;
+                BgRotation = bg.Rotation;
+                BgOpacity = bg.Opacity;
+                BgImagePath = bg.ImagePath;
                 PlaceholderText = "";
             }
             else
@@ -343,5 +368,68 @@ public partial class PropertyPanelViewModel : ObservableObject
         _editor.History.Execute(new ChangePropertyCommand(
             () => { SelectedRoom.TopZ = value; _editor.RoomsDirty = true; },
             () => { SelectedRoom.TopZ = old; _editor.RoomsDirty = true; }));
+    }
+
+    // Background property changes
+    partial void OnBgNameChanged(string value)
+    {
+        if (SelectedBackground == null || _updating) return;
+        var old = SelectedBackground.Name;
+        _editor.History.Execute(new ChangePropertyCommand(() => SelectedBackground.Name = value, () => SelectedBackground.Name = old));
+    }
+
+    partial void OnBgRealWidthChanged(double value)
+    {
+        if (SelectedBackground == null || value <= 0 || _updating) return;
+        var old = SelectedBackground.RealWidth;
+        _editor.History.Execute(new ChangePropertyCommand(
+            () => { SelectedBackground.RealWidth = value; _editor.BackgroundsDirty = true; },
+            () => { SelectedBackground.RealWidth = old; _editor.BackgroundsDirty = true; }));
+    }
+
+    partial void OnBgRealHeightChanged(double value)
+    {
+        if (SelectedBackground == null || value <= 0 || _updating) return;
+        var old = SelectedBackground.RealHeight;
+        _editor.History.Execute(new ChangePropertyCommand(
+            () => { SelectedBackground.RealHeight = value; _editor.BackgroundsDirty = true; },
+            () => { SelectedBackground.RealHeight = old; _editor.BackgroundsDirty = true; }));
+    }
+
+    partial void OnBgOriginXChanged(double value)
+    {
+        if (SelectedBackground == null || _updating) return;
+        var old = SelectedBackground.Origin;
+        _editor.History.Execute(new ChangePropertyCommand(
+            () => { SelectedBackground.Origin = new Point2D(value, SelectedBackground.Origin.Y); _editor.BackgroundsDirty = true; },
+            () => { SelectedBackground.Origin = old; _editor.BackgroundsDirty = true; }));
+    }
+
+    partial void OnBgOriginYChanged(double value)
+    {
+        if (SelectedBackground == null || _updating) return;
+        var old = SelectedBackground.Origin;
+        _editor.History.Execute(new ChangePropertyCommand(
+            () => { SelectedBackground.Origin = new Point2D(SelectedBackground.Origin.X, value); _editor.BackgroundsDirty = true; },
+            () => { SelectedBackground.Origin = old; _editor.BackgroundsDirty = true; }));
+    }
+
+    partial void OnBgRotationChanged(double value)
+    {
+        if (SelectedBackground == null || _updating) return;
+        var old = SelectedBackground.Rotation;
+        _editor.History.Execute(new ChangePropertyCommand(
+            () => { SelectedBackground.Rotation = value; _editor.BackgroundsDirty = true; },
+            () => { SelectedBackground.Rotation = old; _editor.BackgroundsDirty = true; }));
+    }
+
+    partial void OnBgOpacityChanged(double value)
+    {
+        if (SelectedBackground == null || _updating) return;
+        var clamped = Math.Clamp(value, 0.0, 1.0);
+        var old = SelectedBackground.Opacity;
+        _editor.History.Execute(new ChangePropertyCommand(
+            () => { SelectedBackground.Opacity = clamped; _editor.BackgroundsDirty = true; },
+            () => { SelectedBackground.Opacity = old; _editor.BackgroundsDirty = true; }));
     }
 }

@@ -44,6 +44,10 @@ public class EditorState
     public HashSet<Slab> SelectedSlabs { get; } = new();
     public HashSet<StairFlight> SelectedStairs { get; } = new();
     public HashSet<Room> SelectedRooms { get; } = new();
+    public HashSet<Background> SelectedBackgrounds { get; } = new();
+
+    // Background visibility toggle
+    public bool ShowBackgrounds { get; set; } = true;
 
     // Snap
     public SnapEngine SnapEngine { get; } = new();
@@ -59,6 +63,7 @@ public class EditorState
     public Point2D TransformOriginalStairStart { get; set; } = new(0, 0);
     public Point2D TransformOriginalStairEnd { get; set; } = new(0, 0);
     public List<Point2D> TransformOriginalRoomPoints { get; set; } = new();
+    public Point2D TransformOriginalBgOrigin { get; set; } = new(0, 0);
 
     // Renderers
     public WallRenderer WallRenderer { get; } = new();
@@ -74,6 +79,7 @@ public class EditorState
     public bool SlabsDirty { get; set; } = true;
     public bool StairsDirty { get; set; } = true;
     public bool RoomsDirty { get; set; } = true;
+    public bool BackgroundsDirty { get; set; } = true;
     public bool SelectionDirty { get; set; } = true;
 
     // Room drawing state
@@ -173,6 +179,15 @@ public class EditorState
                 BottomZ = source.Level + source.Height,
                 TopZ = source.Level + source.Height + source.Height,
                 Mode = r.Mode
+            }).ToList(),
+            Backgrounds = source.Backgrounds.Select(b => new Background
+            {
+                Name = b.Name + "-copy",
+                ImagePath = b.ImagePath,
+                RealWidth = b.RealWidth, RealHeight = b.RealHeight,
+                Rotation = b.Rotation, CorrectionAngle = b.CorrectionAngle,
+                Opacity = b.Opacity, Visible = b.Visible,
+                Origin = b.Origin
             }).ToList()
         };
 
@@ -229,7 +244,8 @@ public class EditorState
     private void MarkAllDirty()
     {
         WallsDirty = true; DoorsDirty = true; SlabsDirty = true;
-        StairsDirty = true; RoomsDirty = true; SelectionDirty = true;
+        StairsDirty = true; RoomsDirty = true; BackgroundsDirty = true;
+        SelectionDirty = true;
     }
 
     /// Get all walls from visible floors
@@ -285,6 +301,23 @@ public class EditorState
                 if (idx >= 0 && idx < Building.Floors.Count)
                     foreach (var r in Building.Floors[idx].Rooms)
                         yield return r;
+        }
+    }
+
+    /// Get all backgrounds from visible floors (that are individually visible)
+    public IEnumerable<(Background bg, double floorLevel)> VisibleBackgrounds
+    {
+        get
+        {
+            if (!ShowBackgrounds) yield break;
+            foreach (var idx in VisibleFloorIndices)
+            {
+                if (idx < 0 || idx >= Building.Floors.Count) continue;
+                var floor = Building.Floors[idx];
+                foreach (var bg in floor.Backgrounds)
+                    if (bg.Visible)
+                        yield return (bg, floor.Level);
+            }
         }
     }
 
@@ -500,6 +533,7 @@ public class EditorState
     {
         SelectedWalls.Clear(); SelectedDoors.Clear();
         SelectedSlabs.Clear(); SelectedStairs.Clear(); SelectedRooms.Clear();
+        SelectedBackgrounds.Clear();
     }
 
     public void SelectWall(Wall? wall, bool addToSelection = false)
@@ -542,9 +576,17 @@ public class EditorState
         SelectionChanged?.Invoke();
     }
 
+    public void SelectBackground(Background? bg, bool addToSelection = false)
+    {
+        if (!addToSelection) ClearAllSelection();
+        if (bg != null) SelectedBackgrounds.Add(bg);
+        SelectionDirty = true;
+        SelectionChanged?.Invoke();
+    }
+
     public void ClearSelection()
     {
-        int total = SelectedWalls.Count + SelectedDoors.Count + SelectedSlabs.Count + SelectedStairs.Count + SelectedRooms.Count;
+        int total = SelectedWalls.Count + SelectedDoors.Count + SelectedSlabs.Count + SelectedStairs.Count + SelectedRooms.Count + SelectedBackgrounds.Count;
         if (total == 0) return;
         ClearAllSelection();
         SelectionDirty = true;
@@ -552,13 +594,14 @@ public class EditorState
     }
 
     private int OtherSelectedCount =>
-        SelectedWalls.Count + SelectedDoors.Count + SelectedSlabs.Count + SelectedStairs.Count + SelectedRooms.Count;
+        SelectedWalls.Count + SelectedDoors.Count + SelectedSlabs.Count + SelectedStairs.Count + SelectedRooms.Count + SelectedBackgrounds.Count;
 
     public Wall? SingleSelectedWall => SelectedWalls.Count == 1 && OtherSelectedCount - 1 == 0 ? SelectedWalls.First() : null;
     public Door? SingleSelectedDoor => SelectedDoors.Count == 1 && OtherSelectedCount - 1 == 0 ? SelectedDoors.First() : null;
     public Slab? SingleSelectedSlab => SelectedSlabs.Count == 1 && OtherSelectedCount - 1 == 0 ? SelectedSlabs.First() : null;
     public StairFlight? SingleSelectedStair => SelectedStairs.Count == 1 && OtherSelectedCount - 1 == 0 ? SelectedStairs.First() : null;
     public Room? SingleSelectedRoom => SelectedRooms.Count == 1 && OtherSelectedCount - 1 == 0 ? SelectedRooms.First() : null;
+    public Background? SingleSelectedBackground => SelectedBackgrounds.Count == 1 && OtherSelectedCount - 1 == 0 ? SelectedBackgrounds.First() : null;
     public bool HasAnySelection => OtherSelectedCount > 0;
 
     // --- Delete ---
@@ -566,6 +609,18 @@ public class EditorState
     public void DeleteSelected()
     {
         if (!HasAnySelection) return;
+
+        // Delete backgrounds
+        if (SelectedBackgrounds.Count > 0)
+        {
+            foreach (var bg in SelectedBackgrounds)
+            {
+                foreach (var floor in Building.Floors)
+                    floor.Backgrounds.Remove(bg);
+            }
+            BackgroundsDirty = true;
+            HierarchyChanged?.Invoke();
+        }
 
         // Delete rooms
         if (SelectedRooms.Count > 0)
@@ -620,6 +675,12 @@ public class EditorState
             TransformStart = cursorPos;
             TransformOriginalRoomPoints = room.Outline.Points.Select(p => p).ToList();
         }
+        else if (SingleSelectedBackground is { } bg)
+        {
+            ActiveTransform = TransformMode.Move;
+            TransformStart = cursorPos;
+            TransformOriginalBgOrigin = bg.Origin;
+        }
     }
 
     public void UpdateMove(Point2D cursorPos)
@@ -654,6 +715,11 @@ public class EditorState
         {
             room.Outline.Points = TransformOriginalRoomPoints.Select(p => p + delta).ToList();
             RoomsDirty = true; SelectionDirty = true;
+        }
+        else if (SingleSelectedBackground is { } bg)
+        {
+            bg.Origin = TransformOriginalBgOrigin + delta;
+            BackgroundsDirty = true; SelectionDirty = true;
         }
     }
 
@@ -694,6 +760,13 @@ public class EditorState
                 () => { }, () => { room.Outline.Points = op; RoomsDirty = true; SelectionDirty = true; }));
             ActiveTransform = TransformMode.None; RoomsDirty = true;
         }
+        else if (SingleSelectedBackground is { } bg && ActiveTransform == TransformMode.Move)
+        {
+            var oo = TransformOriginalBgOrigin; var no = bg.Origin;
+            History.Execute(new ChangePropertyCommand(
+                () => { }, () => { bg.Origin = oo; BackgroundsDirty = true; SelectionDirty = true; }));
+            ActiveTransform = TransformMode.None; BackgroundsDirty = true;
+        }
     }
 
     public void CancelMove()
@@ -708,6 +781,8 @@ public class EditorState
         { stair.Start = TransformOriginalStairStart; stair.End = TransformOriginalStairEnd; StairsDirty = true; }
         if (SingleSelectedRoom is { } room && TransformOriginalRoomPoints.Count >= 3)
         { room.Outline.Points = TransformOriginalRoomPoints; RoomsDirty = true; }
+        if (SingleSelectedBackground is { } bg)
+        { bg.Origin = TransformOriginalBgOrigin; BackgroundsDirty = true; }
 
         ActiveTransform = TransformMode.None; SelectionDirty = true;
     }
@@ -862,6 +937,14 @@ public class EditorState
     {
         foreach (var floor in Building.Floors)
             if (floor.Rooms.Contains(room)) return floor;
+        return null;
+    }
+
+    /// Find which floor a background belongs to
+    public Floor? FindFloorForBackground(Background bg)
+    {
+        foreach (var floor in Building.Floors)
+            if (floor.Backgrounds.Contains(bg)) return floor;
         return null;
     }
 }
