@@ -9,7 +9,7 @@
 
 ## СТАТУС РЕАЛИЗАЦИИ (2026-06-13)
 
-### ✅ Завершено: Фазы 0-4
+### ✅ Завершено: Фазы 0-5
 
 **Коммиты:**
 - `3e94f0eccd` — Фазы 0-1 (скелет + viewport)
@@ -17,6 +17,7 @@
 - `0a166ca1a4` — фикс NullReferenceException в MenuItem
 - Фаза 3 — Двери, Перекрытия, Лестницы
 - `7888c02022` — Фаза 4 (multi-floor, hierarchy tree, rooms, context menus)
+- `7b56c90ca0` — Фаза 5 (подложки — Backgrounds)
 
 #### Фаза 0: Скелет проекта
 - Создан .NET 8 solution `Source/fds5/GUI/FdsGui.sln`
@@ -185,7 +186,37 @@ FdsGui.App:
 - **Room Move/Delete** поддержка
 - **RoomDetector:** автоопределение замкнутых контуров по графу стен
 
-### ⏳ Следующая фаза: Фаза 5 — Подложки (Backgrounds)
+#### Фаза 5: Подложки (Backgrounds) (завершено)
+
+**Коммит:** `7b56c90ca0`
+
+**Новые/модифицированные файлы:**
+
+FdsGui.Viewport:
+- `Renderers/BackgroundRenderer.cs` — **новый файл**: MVP цветной полупрозрачный quad, batched geometry, outline vertices
+- `EditorState.cs` — SelectedBackgrounds, ShowBackgrounds, BackgroundsDirty, VisibleBackgrounds, SelectBackground, Move/Delete support, DuplicateFloor copies backgrounds
+- `Picking/ObjectPicker.cs` — PickBackground (ray-AABB intersection)
+
+FdsGui.App:
+- `Controls/GlViewportControl.cs` — RenderBackgrounds() (перед стенами), bg VAO/VBO/EBO, selection outline, picking в priority chain
+- `Views/MainWindow.axaml` — toolbar кнопка «BG», status bar BG count
+- `Views/MainWindow.axaml.cs` — ПКМ «Add Background...» (StorageProvider API), TreeView «🖼️ Backgrounds (N)» с дочерними узлами
+- `ViewModels/PropertyPanelViewModel.cs` — Background properties (Name, RealWidth, RealHeight, OriginX/Y, Rotation, Opacity)
+- `Views/PropertyPanelView.axaml` — Background section
+
+**Реализованные возможности:**
+- **ПКМ → Add Background:** выбор файла через StorageProvider (PNG/JPG/BMP)
+- **Рендеринг:** полупрозрачный цветной quad (зелёный placeholder) на Z = floorLevel - 0.01
+- **Поворот:** Rotation вокруг Origin
+- **TreeView:** «🖼️ Backgrounds (N)» узел с дочерними подложками + ПКМ Delete/Properties
+- **Picking:** ЛКМ на подложку → selection (yellow wireframe outline)
+- **PropertyPanel:** Name, RealWidth/Height, OriginX/Y, Rotation, Opacity с undo/redo
+- **Toolbar «BG»:** toggle видимости всех подложек
+- **Move (G):** перемещение подложки мышью
+- **Delete (X):** удаление подложки
+- **Render order:** backgrounds → walls → doors → slabs → stairs → rooms
+
+### ⏳ Следующая фаза: Фаза 6 — Генерация .fds + Запуск FDS
 
 ---
 
