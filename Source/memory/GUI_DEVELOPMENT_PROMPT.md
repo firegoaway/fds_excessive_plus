@@ -9,9 +9,12 @@
 
 ## СТАТУС РЕАЛИЗАЦИИ (2026-06-13)
 
-### ✅ Завершено: Фазы 0-1
+### ✅ Завершено: Фазы 0-2
 
-**Коммит:** `3e94f0eccd`
+**Коммиты:**
+- `3e94f0eccd` — Фазы 0-1 (скелет + viewport)
+- `b194faa99d` — Фаза 2 (стены + snap + selection + transform + undo/redo)
+- `0a166ca1a4` — фикс NullReferenceException в MenuItem
 
 #### Фаза 0: Скелет проекта
 - Создан .NET 8 solution `Source/fds5/GUI/FdsGui.sln`
@@ -44,8 +47,56 @@ dotnet run --project Source/fds5/GUI/FdsGui.App/FdsGui.App.csproj
 - OpenTK GL4 bindings загружаются через `GL.LoadBindings(new AvaloniaGlBindings(gl))`
 - Формат вершин: `float[7]` = `xyz` (3 floats) + `rgba` (4 floats), stride = 28 байт
 - Разрешены `unsafe` блоки для GL buffer operations
+- MenuItem в Avalonia Menu находятся в **логическом** дереве, а не визуальном — использовать `Click=` в AXAML
 
-### ⏳ Следующая фаза: Фаза 2 — Рисование стен + Snap to Grid
+#### Фаза 2: Рисование стен + Snap to Grid (завершено)
+
+**Коммит:** `b194faa99d`
+
+**Созданные файлы (21 новый/модифицированный):**
+
+FdsGui.Core:
+- `Commands/ICommand.cs` — интерфейс Execute/Undo
+- `Commands/CommandHistory.cs` — undo/redo stacks
+- `Commands/AddWallCommand.cs` — добавление стены
+- `Commands/MoveObjectCommand.cs` — перемещение стены
+- `Commands/RotateObjectCommand.cs` — поворот стены
+- `Commands/DeleteCommand.cs` — удаление объектов
+- `Commands/ChangePropertyCommand.cs` — изменение свойства (generic)
+
+FdsGui.Viewport:
+- `Snapping/SnapEngine.cs` — grid/endpoint/midpoint/intersection snap, F4 toggle, `[`/`]` шаг
+- `Renderers/WallRenderer.cs` — batched 3D box rendering (VBO/VAO/EBO), 8 вершин × 36 индексов на стену
+- `Renderers/GhostRenderer.cs` — полупрозрачный preview при рисовании/трансформации
+- `Renderers/SelectionRenderer.cs` — outline wireframe + handles на концах стен
+- `Picking/ObjectPicker.cs` — ray-AABB intersection для выбора стен мышью, ScreenToGroundPlane
+- `EditorState.cs` — центральное состояние: tools, transforms, selection, snap, walls
+
+FdsGui.App:
+- `ViewModels/PropertyPanelViewModel.cs` — свойства стены (имя, толщина, высота, Z, материал, цвет)
+- `ViewModels/ToolbarViewModel.cs` — tool mode state, snap state, status bar
+- `Views/PropertyPanelView.axaml` + `.cs` — UI панели свойств
+- `Views/MainWindow.axaml` + `.cs` — toolbar кнопки, wiring, menu handlers
+- `Controls/GlViewportControl.cs` — полная переработка: рендеринг стен/ghost/selection, input handling
+
+**Реализованные возможности:**
+- Wall tool (W): click → drag → создание стены с preview и snap
+- Snap engine: grid/endpoint/midpoint/intersection, F4 toggle, `[`/`]` изменение шага (0.1/0.25/0.5/1.0)
+- Selection: ЛКМ клик выбор стены (ray picking), Shift+ЛКМ добавление
+- Move (G): Blender-style перемещение с snap
+- Rotate (R): поворот вокруг центра стены
+- Mirror H/V: отражение относительно центра
+- Delete (X/Delete): удаление выбранных стен
+- Undo/Redo (Ctrl+Z / Ctrl+Shift+Z): полная история операций
+- Property panel: редактирование имени, толщины (мм), высоты, Z, материала, цвета (hex)
+- Wall renderer: batched 3D boxes с обновлением VBO при изменениях
+- Ghost renderer: полупрозрачный preview стены при рисовании
+- Selection renderer: outline glow (wireframe) + endpoint handles
+
+**Известные исправления:**
+- MenuItem в Avalonia 11.2 Menu не являются visual descendants — `GetVisualDescendants()` не находит их. Использовать `Click=` обработчики прямо в AXAML.
+
+### ⏳ Следующая фаза: Фаза 3 — Двери, Перекрытия, Лестницы
 
 ---
 
