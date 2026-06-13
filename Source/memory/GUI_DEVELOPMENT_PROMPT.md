@@ -722,118 +722,100 @@ MESH (автоматически):
 
 ## АРХИТЕКТУРА ПРОЕКТА
 
-### Структура solution
+### Структура solution (актуальное состояние после Фазы 4)
 
 ```
 FdsGui/
 ├── FdsGui.sln
 │
-├── FdsGui.Core/                   # Domain model + генерация .fds (без UI)
+├── FdsGui.Core/                   # Domain model + команды (без UI)
 │   ├── FdsGui.Core.csproj
 │   ├── Models/
 │   │   ├── Building.cs            # Здание (root)
-│   │   ├── Floor.cs               # Этаж
-│   │   ├── Wall.cs                # Стена
-│   │   ├── Door.cs                # Дверь
-│   │   ├── Slab.cs                # Перекрытие / Площадка
-│   │   ├── StairFlight.cs         # Лестничный марш
-│   │   ├── Room.cs                # Помещение
-│   │   ├── Background.cs          # Подложка
-│   │   ├── ProjectSettings.cs     # Глобальные настройки (mesh size, T_END, ...)
-│   │   └── Enums.cs               # Direction, MaterialType, SnapMode, ...
+│   │   ├── Floor.cs               # Этаж (Level, Height, Walls/Doors/Slabs/Stairs/Rooms/Backgrounds)
+│   │   ├── Wall.cs                # Стена (Start, End, Thickness, Height, BottomZ, Material, Rgb)
+│   │   ├── Door.cs                # Дверь (Position, Width, Height, BottomZ, ParentWallId, Rotation)
+│   │   ├── Slab.cs                # Перекрытие (Outline Polygon2D, Thickness, BottomZ)
+│   │   ├── StairFlight.cs         # Лестница (Start, End, Height, BottomZ, Width, StepHeight, Direction)
+│   │   ├── Room.cs                # Помещение (Outline Polygon2D, BottomZ, TopZ, Mode)
+│   │   ├── Background.cs          # Подложка (ImagePath, RealWidth/Height, Rotation, Opacity, Visible, Origin)
+│   │   ├── ProjectSettings.cs     # Глобальные настройки
+│   │   ├── Geometry.cs            # Point2D (record), Polygon2D (ContainsPoint)
+│   │   └── Enums.cs               # Direction, RoomCreationMode, SnapMode, ToolMode
 │   ├── Generation/
-│   │   ├── FdsGenerator.cs        # Building → .fds текст
-│   │   ├── MeshGenerator.cs       # Auto-mesh: bounding box → MESH namelist
-│   │   ├── StairGenerator.cs      # StairFlight → серия OBST (ступени)
-│   │   └── RoomDetector.cs        # Flood-fill: стены → замкнутые помещения
-│   ├── Import/
-│   │   ├── FdsParser.cs           # .fds → Building (для открытия существующих)
-│   │   └── NamelistTokenizer.cs   # Токенайзер namelist синтаксиса
-│   ├── Export/
-│   │   └── FdsWriter.cs           # Building → .fds (alias для FdsGenerator)
-│   ├── Validation/
-│   │   ├── BuildingValidator.cs   # Проверка перед запуском
-│   │   └── IntersectionChecker.cs # Пересечения стен
-│   ├── Services/
-│   │   ├── FdsRunner.cs           # Запуск FDS subprocess
-│   │   ├── SimulationMonitor.cs   # Мониторинг stdout
-│   │   ├── SmvLauncher.cs         # Запуск SmokeView
-│   │   └── ProjectService.cs      # New / Open / Save / SaveAs
+│   │   └── RoomDetector.cs        # Graph-based cycle detection: стены → замкнутые помещения
 │   └── Commands/
-│       ├── ICommand.cs
-│       ├── AddWallCommand.cs
-│       ├── MoveObjectCommand.cs
-│       ├── DeleteCommand.cs
-│       ├── ChangePropertyCommand.cs
-│       └── CommandHistory.cs      # Undo/Redo
+│       ├── ICommand.cs            # Execute() / Undo()
+│       ├── CommandHistory.cs      # Undo/Redo stacks
+│       ├── AddWallCommand.cs      # Добавить стену на этаж
+│       ├── AddDoorCommand.cs      # Добавить дверь на этаж
+│       ├── AddSlabCommand.cs      # Добавить перекрытие на этаж
+│       ├── AddStairCommand.cs     # Добавить лестницу на этаж
+│       ├── AddFloorCommand.cs     # Добавить этаж в здание
+│       ├── AddRoomCommand.cs      # Добавить помещение на этаж
+│       ├── MoveObjectCommand.cs   # Перемещение (legacy)
+│       ├── RotateObjectCommand.cs # Поворот (legacy)
+│       ├── DeleteCommand.cs       # Удаление (Wall+Door+Slab+Stair multi-type)
+│       └── ChangePropertyCommand.cs  # Generic property change with undo
 │
-├── FdsGui.Viewport/               # OpenTK 3D rendering
+├── FdsGui.Viewport/               # OpenGL 3D rendering (OpenTK)
 │   ├── FdsGui.Viewport.csproj
+│   ├── EditorState.cs             # Central state: tools, selection, transforms, floors, rooms, events
 │   ├── Camera.cs                  # Orbit/Pan/Zoom (Blender-style)
-│   ├── ShaderProgram.cs           # GLSL compilation
-│   ├── MeshBuffer.cs              # VAO/VBO management
-│   ├── Scene.cs                   # Scene graph
-│   ├── GridOverlay.cs             # Grid plane + snap visualization
+│   ├── GridRenderer.cs            # Grid plane + axes
 │   ├── Renderers/
-│   │   ├── WallRenderer.cs        # Стены (solid boxes + wireframe)
-│   │   ├── DoorRenderer.cs        # Двери (вырезы в стенах)
-│   │   ├── SlabRenderer.cs        # Перекрытия (horizontal slabs)
-│   │   ├── StairRenderer.cs       # Лестницы (ступени)
-│   │   ├── RoomRenderer.cs        # Помещения (transparent volumes)
-│   │   ├── BackgroundRenderer.cs  # Подложки (textured quads)
-│   │   ├── SelectionRenderer.cs   # Выделение (outline glow + handles)
-│   │   └── GhostRenderer.cs       # Preview объекта при рисовании
+│   │   ├── WallRenderer.cs        # Batched 3D boxes (8 verts × 36 indices/wall)
+│   │   ├── DoorRenderer.cs        # Batched 3D boxes на стене (коричневый)
+│   │   ├── SlabRenderer.cs        # Batched 3D boxes горизонтальные (серый)
+│   │   ├── StairRenderer.cs       # Batched ступени (зелёный)
+│   │   ├── RoomRenderer.cs        # Semi-transparent extruded polygon (голубой, α=0.15)
+│   │   ├── GhostRenderer.cs       # Preview при рисовании (Wall+Slab+Stair, α=0.4)
+│   │   └── SelectionRenderer.cs   # Outline wireframe + endpoint handles (жёлтый)
 │   ├── Picking/
-│   │   └── ObjectPicker.cs        # Ray casting для выбора объектов мышью
-│   ├── Snapping/
-│   │   └── SnapEngine.cs          # Grid/endpoint/midpoint/intersection snap
-│   ├── Shaders/
-│   │   ├── basic.vert / basic.frag
-│   │   ├── lit.vert / lit.frag       # Phong lighting
-│   │   ├── outline.vert / outline.frag # Selection glow
-│   │   └── ghost.vert / ghost.frag   # Semi-transparent preview
-│   └── Colormaps/                 # Для визуализации результатов (Фаза 6)
-│       ├── ColormapGenerator.cs
-│       └── ThermalColormap.cs
+│   │   └── ObjectPicker.cs        # Ray-AABB: PickWall/PickDoor/PickSlab/PickStair/PickRoom + ScreenToGroundPlane(groundZ)
+│   └── Snapping/
+│       └── SnapEngine.cs          # Grid/endpoint/midpoint/intersection snap (F4 toggle)
 │
-├── FdsGui.App/                    # Avalonia application (UI)
+├── FdsGui.App/                    # Avalonia UI application
 │   ├── FdsGui.App.csproj
-│   ├── App.axaml
-│   ├── ViewModels/
-│   │   ├── MainViewModel.cs
-│   │   ├── HierarchyViewModel.cs     # Дерево иерархии
-│   │   ├── PropertyPanelViewModel.cs # Свойства выбранного объекта
-│   │   ├── ViewportViewModel.cs      # 3D viewport
-│   │   ├── ToolbarViewModel.cs       # Панель инструментов
-│   │   ├── BackgroundViewModel.cs    # Редактор подложек
-│   │   ├── FloorPropertiesViewModel.cs
-│   │   └── SimulationViewModel.cs   # Запуск/мониторинг
-│   ├── Views/
-│   │   ├── MainWindow.axaml
-│   │   ├── HierarchyView.axaml       # Панель иерархии (TreeView)
-│   │   ├── PropertyPanelView.axaml   # Панель свойств
-│   │   ├── ViewportView.axaml        # 3D viewport (host GLControl)
-│   │   ├── BackgroundView.axaml      # Редактор подложек (орто вид)
-│   │   ├── FloorPropertiesDialog.axaml
-│   │   ├── ProjectSettingsView.axaml
-│   │   └── SimulationView.axaml      # Прогресс расчёта
+│   ├── Program.cs
+│   ├── App.axaml / App.axaml.cs
 │   ├── Controls/
-│   │   ├── GlViewportControl.cs      # OpenTK GLControl host
-│   │   └── NumericInput.cs           # Числовой ввод с единицами
-│   └── Converters/
-│       └── ...
+│   │   └── GlViewportControl.cs   # OpenGlControlBase: rendering, input, camera, all tools
+│   ├── ViewModels/
+│   │   ├── PropertyPanelViewModel.cs  # Wall/Door/Slab/Stair/Room properties + undo
+│   │   └── ToolbarViewModel.cs    # Tool mode, snap state, status text
+│   └── Views/
+│       ├── MainWindow.axaml       # 3-panel: hierarchy tree | viewport | property panel
+│       ├── MainWindow.axaml.cs    # RebuildTreeView(), context menus, dialogs, wiring
+│       ├── PropertyPanelView.axaml  # 5 context sections (Wall/Door/Slab/Stair/Room)
+│       └── PropertyPanelView.axaml.cs
 │
 └── FdsGui.Tests/
     ├── FdsGui.Tests.csproj
-    ├── Generation/
-    │   ├── FdsGeneratorTests.cs
-    │   ├── MeshGeneratorTests.cs
-    │   └── RoomDetectorTests.cs
-    ├── Import/
-    │   └── FdsParserTests.cs
-    └── TestData/
-        ├── simple_room.fds
-        └── multi_floor.fds
+    └── UnitTest1.cs               # Placeholder
+```
+
+### Планируемые файлы (ещё не созданы)
+
+```
+FdsGui.Core/
+├── Generation/
+│   ├── FdsGenerator.cs        # Фаза 6: Building → .fds
+│   └── MeshGenerator.cs       # Фаза 6: auto-mesh
+├── Import/
+│   ├── FdsParser.cs           # Фаза 7: .fds → Building
+│   └── NamelistTokenizer.cs   # Фаза 7
+├── Services/
+│   ├── FdsRunner.cs           # Фаза 6: subprocess launch
+│   ├── SmvLauncher.cs         # Фаза 6: SmokeView launch
+│   └── ProjectService.cs     # Фаза 9: New/Open/Save
+└── Validation/
+    └── BuildingValidator.cs   # Фаза 6
+
+FdsGui.Viewport/
+├── Renderers/
+│   └── BackgroundRenderer.cs  # Фаза 5: textured quad for backgrounds
 ```
 
 ---
@@ -1065,13 +1047,16 @@ dotnet new xunit -n FdsGui.Tests
 
 ---
 
-### Фаза 5: Подложки (3-5 дней)
+### Фаза 5: Подложки (Backgrounds) ⏳ СЛЕДУЮЩАЯ
 
-1. ПКМ по этажу → «Добавить подложку» → выбор файла.
-2. Background view (вкладка рядом с viewport): ортогональный вид сверху.
-3. Свойства подложки: реальные размеры, поворот, угол коррекции, прозрачность.
-4. Кнопка 🖼️ Вкл/Выкл подложку в основном viewport.
-5. Background renderer (textured quad на Z = уровень этажа).
+1. **Модель Background:** файл (PNG/JPG/BMP/PDF), масштаб, смещение, поворот, прозрачность.
+2. **ПКМ по этажу → «Добавить подложку»** → диалог выбора файла (OpenFileDialog).
+3. **Background в TreeView:** отдельный узел под этажом, ПКМ → свойства, удалить.
+4. **Background renderer:** textured quad на Z = уровень этажа (OpenGL texture).
+5. **Свойства подложки:** реальные размеры (мм), X/Y offset, поворот (градусы), прозрачность (0-100%), вкл/выкл.
+6. **Калибровка:** 2 точки на плане → задать реальное расстояние → автоматический масштаб.
+7. **PropertyPanel:** секция для Background (имя, файл, масштаб, смещение, поворот, прозрачность).
+8. **Toggle:** кнопка 🖼️ в toolbar — показать/скрыть все подложки.
 
 **Итог:** Можно загрузить план из CAD и трассировать стены поверх.
 
@@ -1152,23 +1137,23 @@ dotnet new xunit -n FdsGui.Tests
 | 1. Viewport + камера | ✅ | 3D навигация |
 | 2. Стены + snap | ✅ | Рисование стен |
 | 3. Двери, перекрытия, лестницы | ✅ | Полный набор инструментов |
-| **4. Этажи + иерархия + помещения** | **⏳ СЛЕДУЮЩАЯ** | **Многоэтажный редактор** |
-| 5. Подложки | ⏳ | Трассировка по планам |
+| 4. Этажи + иерархия + помещения | ✅ | Многоэтажный редактор |
+| **5. Подложки** | **⏳ СЛЕДУЮЩАЯ** | **Трассировка по планам** |
 | 6. Генерация .fds + запуск FDS | ⏳ | End-to-end: от рисунка до расчёта |
 | 7. Импорт .fds | ⏳ | Открытие существующих файлов |
 | 8. Визуализация результатов | ⏳ | Встроенный SmokeView |
 | 9. Полировка | ⏳ | Production quality |
-| **Всего** | **43-72** | **Полноценный GUI** |
 
 ---
 
 ## ПОРЯДОК ДЕЙСТВИЙ
 
-1. **Начать с Фазы 0** — скелет проекта.
-2. **Каждая фаза = рабочий прототип.** Коммитить после каждой.
-3. **Тесты:** unit tests для генераторов и парсеров.
-4. **SmokeView source:** начать изучать параллельно с Фазой 2-3, чтобы к Фазе 8 быть готовым.
-5. **Тестировать на реальных задачах:** после Фазы 6 — попробовать нарисовать реальное здание и запустить FDS.
+1. **Фазы 0-4 завершены** — многоэтажный редактор работает.
+2. **Следующая: Фаза 5** — подложки (Backgrounds). Загрузка PNG/PDF планов этажей, наложение в viewport, трассировка стен поверх.
+3. **Каждая фаза = рабочий прототип.** Коммитить после каждой.
+4. **Тесты:** unit tests для генераторов и парсеров.
+5. **SmokeView source:** начать изучать параллельно с Фазой 5-6, чтобы к Фазе 8 быть готовым.
+6. **Тестировать на реальных задачах:** после Фазы 6 — попробовать нарисовать реальное здание и запустить FDS.
 
 ---
 
