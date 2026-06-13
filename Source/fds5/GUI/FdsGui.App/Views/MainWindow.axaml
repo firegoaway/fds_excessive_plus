@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="using:FdsGui.App.Controls"
+        xmlns:views="using:FdsGui.App.Views"
         x:Class="FdsGui.App.Views.MainWindow"
         Title="FDS Building Editor"
         Width="1400" Height="900"
@@ -25,10 +26,10 @@
                 <MenuItem Header="E_xit" InputGesture="Alt+F4"/>
             </MenuItem>
             <MenuItem Header="_Edit">
-                <MenuItem Header="_Undo" InputGesture="Ctrl+Z"/>
-                <MenuItem Header="_Redo" InputGesture="Ctrl+Shift+Z"/>
+                <MenuItem Header="_Undo" InputGesture="Ctrl+Z" Name="MenuUndo"/>
+                <MenuItem Header="_Redo" InputGesture="Ctrl+Shift+Z" Name="MenuRedo"/>
                 <Separator/>
-                <MenuItem Header="_Delete" InputGesture="Delete"/>
+                <MenuItem Header="_Delete" InputGesture="Delete" Name="MenuDelete"/>
                 <MenuItem Header="D_uplicate" InputGesture="Ctrl+D"/>
                 <Separator/>
                 <MenuItem Header="Select _All" InputGesture="Ctrl+A"/>
@@ -41,7 +42,7 @@
                 <Separator/>
                 <MenuItem Header="Toggle _Perspective/Ortho" InputGesture="NumPad5"/>
                 <Separator/>
-                <MenuItem Header="_Snap to Grid" InputGesture="F4" IsChecked="True"/>
+                <MenuItem Header="_Snap to Grid" InputGesture="F4" Name="MenuSnapToggle"/>
             </MenuItem>
             <MenuItem Header="_Simulate">
                 <MenuItem Header="_Run Simulation" InputGesture="F5"/>
@@ -61,17 +62,31 @@
             <Button Content="Open" Margin="2,0"/>
             <Button Content="Save" Margin="2,0"/>
             <Separator/>
-            <Button Content="▶ Run" Margin="2,0" Classes="accent"/>
-            <Button Content="⏹ Stop" Margin="2,0"/>
-            <Button Content="👁 Results" Margin="2,0"/>
+            <Button Content="Run" Margin="2,0"/>
+            <Button Content="Stop" Margin="2,0"/>
+            <Button Content="Results" Margin="2,0"/>
             <Separator/>
-            <Button Content="✓ Validate" Margin="2,0"/>
+            <Button Content="Validate" Margin="2,0"/>
+            <Separator/>
+            <Button Content="Select" Margin="2,0" Name="BtnSelect"/>
+            <Button Content="Wall (W)" Margin="2,0" Name="BtnWall"/>
+            <Separator/>
+            <Button Content="Move (G)" Margin="2,0" Name="BtnMove"/>
+            <Button Content="Rotate (R)" Margin="2,0" Name="BtnRotate"/>
+            <Separator/>
+            <Button Content="Mirror H" Margin="2,0" Name="BtnMirrorH"/>
+            <Button Content="Mirror V" Margin="2,0" Name="BtnMirrorV"/>
+            <Separator/>
+            <Button Content="Snap: ON" Margin="2,0" Name="BtnSnapToggle"/>
+            <Button Content="Grid+" Margin="2,0" Name="BtnGridPlus"/>
+            <Button Content="Grid-" Margin="2,0" Name="BtnGridMinus"/>
         </StackPanel>
 
         <!-- Status Bar -->
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="4,2">
             <TextBlock Text="Ready" Name="StatusText"/>
-            <TextBlock Text="  |  Mesh cells: ~0" Name="MeshInfo" Margin="20,0,0,0"/>
+            <TextBlock Text="  |  Walls: 0" Name="WallCount" Margin="20,0,0,0"/>
+            <TextBlock Text="  |  Grid: 0.5m" Name="GridInfo" Margin="20,0,0,0"/>
         </StackPanel>
 
         <!-- Main Content: 3-panel layout -->
@@ -82,55 +97,27 @@
                 <DockPanel>
                     <TextBlock DockPanel.Dock="Top" Text="Hierarchy" FontWeight="Bold" Margin="8,4"/>
                     <TreeView Name="HierarchyTree">
-                        <TreeViewItem Header="🏢 Building" IsExpanded="True">
-                            <TreeViewItem Header="📐 Floor 1" IsExpanded="True">
-                                <TreeViewItem Header="🧱 Walls"/>
-                                <TreeViewItem Header="🚪 Doors"/>
-                                <TreeViewItem Header="⬜ Slabs"/>
-                                <TreeViewItem Header="🪜 Stairs"/>
-                                <TreeViewItem Header="🏠 Rooms"/>
+                        <TreeViewItem Header="Building" IsExpanded="True">
+                            <TreeViewItem Header="Floor 1" IsExpanded="True">
+                                <TreeViewItem Header="Walls" Name="WallsNode"/>
+                                <TreeViewItem Header="Doors"/>
+                                <TreeViewItem Header="Slabs"/>
+                                <TreeViewItem Header="Stairs"/>
+                                <TreeViewItem Header="Rooms"/>
                             </TreeViewItem>
                         </TreeViewItem>
                     </TreeView>
                 </DockPanel>
             </Border>
 
-            <!-- Center: Viewport placeholder -->
+            <!-- Center: Viewport -->
             <Border Grid.Column="1" BorderBrush="Gray" BorderThickness="1" Margin="2">
-                <DockPanel>
-                    <!-- Viewport toolbar -->
-                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4,2">
-                        <Button Content="🔄 Pan" Margin="2,0"/>
-                        <Button Content="🔍+" Margin="2,0"/>
-                        <Button Content="🔍-" Margin="2,0"/>
-                        <Button Content="↻ Rotate" Margin="2,0"/>
-                        <Button Content="🏠 Iso" Margin="2,0"/>
-                        <Separator/>
-                        <Button Content="🧱 Wall" Margin="2,0"/>
-                        <Button Content="🚪 Door" Margin="2,0"/>
-                        <Button Content="⬜ Slab" Margin="2,0"/>
-                        <Button Content="🪜 Stair" Margin="2,0"/>
-                        <Button Content="🏠 Room" Margin="2,0"/>
-                        <Separator/>
-                        <Button Content="📐 Snap: ON" Margin="2,0" Name="SnapToggle"/>
-                    </StackPanel>
-
-                    <!-- Viewport area -->
-                    <controls:GlViewportControl Margin="0,4,0,0"/>
-                </DockPanel>
+                <controls:GlViewportControl Name="Viewport"/>
             </Border>
 
             <!-- Right Panel: Properties -->
             <Border Grid.Column="2" BorderBrush="Gray" BorderThickness="1" Margin="2">
-                <DockPanel>
-                    <TextBlock DockPanel.Dock="Top" Text="Properties" FontWeight="Bold" Margin="8,4"/>
-                    <ScrollViewer>
-                        <StackPanel Margin="8,4">
-                            <TextBlock Text="Select an object to view properties"
-                                       Foreground="Gray" FontStyle="Italic"/>
-                        </StackPanel>
-                    </ScrollViewer>
-                </DockPanel>
+                <views:PropertyPanelView Name="PropertyPanel"/>
             </Border>
         </Grid>
     </DockPanel>

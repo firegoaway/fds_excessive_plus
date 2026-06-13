@@ -10,4 +10,8 @@
     <PackageReference Include="OpenTK" Version="4.9.3" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\FdsGui.Core\FdsGui.Core.csproj" />
+  </ItemGroup>
+
 </Project>

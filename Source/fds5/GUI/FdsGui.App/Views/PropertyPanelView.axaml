@@ -1,0 +1,82 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:FdsGui.App.ViewModels"
+             x:Class="FdsGui.App.Views.PropertyPanelView">
+
+    <DockPanel>
+        <TextBlock DockPanel.Dock="Top" Text="Properties" FontWeight="Bold" Margin="8,4"/>
+
+        <!-- Placeholder when nothing selected -->
+        <TextBlock Text="{Binding PlaceholderText}"
+                   Foreground="Gray" FontStyle="Italic" Margin="8,4"
+                   IsVisible="{Binding !HasSelection}"/>
+
+        <!-- Wall properties -->
+        <ScrollViewer IsVisible="{Binding HasSelection}">
+            <StackPanel Margin="8,4" Spacing="6">
+
+                <TextBlock Text="Wall" FontWeight="Bold" FontSize="14"/>
+
+                <!-- Name -->
+                <StackPanel>
+                    <TextBlock Text="Name" FontSize="11" Foreground="Gray"/>
+                    <TextBox Text="{Binding WallName}" />
+                </StackPanel>
+
+                <!-- Thickness -->
+                <StackPanel>
+                    <TextBlock Text="Thickness (mm)" FontSize="11" Foreground="Gray"/>
+                    <NumericUpDown Value="{Binding Thickness}"
+                                   Minimum="10" Maximum="2000" Increment="10"
+                                   FormatString="F0" />
+                </StackPanel>
+
+                <!-- Height -->
+                <StackPanel>
+                    <TextBlock Text="Height (m)" FontSize="11" Foreground="Gray"/>
+                    <NumericUpDown Value="{Binding Height}"
+                                   Minimum="0.1" Maximum="100" Increment="0.1"
+                                   FormatString="F2" />
+                </StackPanel>
+
+                <!-- Bottom Z -->
+                <StackPanel>
+                    <TextBlock Text="Bottom Z (m)" FontSize="11" Foreground="Gray"/>
+                    <NumericUpDown Value="{Binding BottomZ}"
+                                   Minimum="-100" Maximum="1000" Increment="0.1"
+                                   FormatString="F2" />
+                </StackPanel>
+
+                <!-- Material -->
+                <StackPanel>
+                    <TextBlock Text="Material" FontSize="11" Foreground="Gray"/>
+                    <ComboBox SelectedItem="{Binding Material}"
+                              ItemsSource="{Binding Materials}" />
+                </StackPanel>
+
+                <!-- Color -->
+                <StackPanel>
+                    <TextBlock Text="Color (hex)" FontSize="11" Foreground="Gray"/>
+                    <TextBox Text="{Binding ColorHex}" />
+                </StackPanel>
+
+                <!-- Action buttons -->
+                <Separator Margin="0,8"/>
+                <TextBlock Text="Transform" FontWeight="Bold" FontSize="12"/>
+
+                <WrapPanel Orientation="Horizontal">
+                    <Button Content="Move (G)" Margin="2" MinWidth="60"/>
+                    <Button Content="Rotate (R)" Margin="2" MinWidth="60"/>
+                </WrapPanel>
+                <WrapPanel Orientation="Horizontal">
+                    <Button Content="Mirror H" Margin="2" MinWidth="60"/>
+                    <Button Content="Mirror V" Margin="2" MinWidth="60"/>
+                </WrapPanel>
+
+                <Separator Margin="0,8"/>
+                <Button Content="Delete (X)" Margin="2"
+                        Background="#CC3333" Foreground="White"/>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</UserControl>
