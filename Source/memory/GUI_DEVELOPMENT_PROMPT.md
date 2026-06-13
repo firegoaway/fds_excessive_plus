@@ -9,13 +9,14 @@
 
 ## СТАТУС РЕАЛИЗАЦИИ (2026-06-13)
 
-### ✅ Завершено: Фазы 0-3
+### ✅ Завершено: Фазы 0-4
 
 **Коммиты:**
 - `3e94f0eccd` — Фазы 0-1 (скелет + viewport)
 - `b194faa99d` — Фаза 2 (стены + snap + selection + transform + undo/redo)
 - `0a166ca1a4` — фикс NullReferenceException в MenuItem
-- Фаза 3 — Двери, Перекрытия, Лестницы (pending commit)
+- Фаза 3 — Двери, Перекрытия, Лестницы
+- `7888c02022` — Фаза 4 (multi-floor, hierarchy tree, rooms, context menus)
 
 #### Фаза 0: Скелет проекта
 - Создан .NET 8 solution `Source/fds5/GUI/FdsGui.sln`
@@ -149,7 +150,42 @@ FdsGui.App:
 - PropertyPanelViewModel использует _updating flag для предотвращения рекурсии при программном обновлении свойств
 - Door привязана к стене через ParentWallId (имя стены), FindWallByName() используется для рендеринга и picking
 
-### ⏳ Следующая фаза: Фаза 4 — Этажи + Иерархия + Помещения
+#### Фаза 4: Этажи + Иерархия + Помещения (завершено)
+
+**Коммит:** `7888c02022`
+
+**Новые/модифицированные файлы:**
+
+FdsGui.Core:
+- `Commands/AddFloorCommand.cs` — добавление этажа через CommandHistory
+- `Commands/AddRoomCommand.cs` — добавление помещения
+- `Generation/RoomDetector.cs` — автоопределение помещений flood-fill по стенам
+
+FdsGui.Viewport:
+- `Renderers/RoomRenderer.cs` — полупрозрачный extruded polygon для N-угольных помещений
+- `EditorState.cs` — полная переработка: multi-floor (ActiveFloorIndex, VisibleFloorIndices), Room tool, Visible* коллекции, HierarchyChanged event
+- `Picking/ObjectPicker.cs` — PickRoom, ScreenToGroundPlane с Z-offset
+
+FdsGui.App:
+- `Views/MainWindow.axaml` — динамический TreeView, Room кнопка, Floor/Room в status bar
+- `Views/MainWindow.axaml.cs` — RebuildTreeView(), контекстные меню (ПКМ), диалоги rename/properties, wiring
+- `ViewModels/PropertyPanelViewModel.cs` — Room properties
+- `Views/PropertyPanelView.axaml` — Room section
+
+**Реализованные возможности:**
+- **Multi-floor:** добавление/удаление/дублирование этажей с правильным Level stacking
+- **Динамический TreeView:** обновляется при каждом изменении (добавление/удаление объектов/этажей)
+- **Контекстные меню:** ПКМ по зданию (Add Floor, Rename), ПКМ по этажу (Properties, Rename, Duplicate, Delete)
+- **Видимость этажей:** клик = один видимый, Shift+клик = toggle, Ctrl+A = все
+- **Z-offset:** рисование привязано к ActiveFloor.Level
+- **Room tool (M):** клики → вершины полигона → Enter замыкает → помещение создано
+- **Room renderer:** полупрозрачный (alpha=0.15) голубой extruded polygon
+- **Room picking/selection:** ray-AABB, wireframe outline
+- **Room PropertyPanel:** имя, BottomZ, TopZ, кол-во вершин, режим
+- **Room Move/Delete** поддержка
+- **RoomDetector:** автоопределение замкнутых контуров по графу стен
+
+### ⏳ Следующая фаза: Фаза 5 — Подложки (Backgrounds)
 
 ---
 
@@ -1013,19 +1049,19 @@ dotnet new xunit -n FdsGui.Tests
 
 ---
 
-### Фаза 4: Этажи + Иерархия + Помещения (СЛЕДУЮЩАЯ)
+### Фаза 4: Этажи + Иерархия + Помещения ✅ ЗАВЕРШЕНО
 
-1. **Hierarchy panel (TreeView):** Здание → Этаж → Стены/Двери/...
-2. **ПКМ по зданию:** Переименовать, Добавить этаж, Свойства (placeholder).
-3. **ПКМ по этажу:** Свойства (высота, уровень), Добавить подложку, Переименовать.
-4. **Новый этаж** ставится точно над верхним существующим.
-5. **Видимость:** выбран 1 этаж → виден только он. Shift → несколько.
-6. **Помещения:**
-   - Кнопка «Произвольная область» — кликать точки, полигон.
-   - Кнопка «Авто по стенам» — flood-fill внутри замкнутого контура стен. Двери игнорируются.
-7. Room renderer (полупрозрачный объём).
+1. ✅ **Hierarchy panel (TreeView):** Динамическое дерево Здание → Этаж → Стены/Двери/Перекрытия/Лестницы/Помещения
+2. ✅ **ПКМ по зданию:** Переименовать, Добавить этаж
+3. ✅ **ПКМ по этажу:** Свойства (высота, уровень), Переименовать, Дублировать, Удалить
+4. ✅ **Новый этаж** ставится точно над верхним существующим (Level = prev.Level + prev.Height)
+5. ✅ **Видимость:** клик = один этаж, Shift = toggle, Ctrl+A = все
+6. ✅ **Помещения:**
+   - Manual mode (M): кликать точки → полигон → Enter замыкает
+   - RoomDetector (auto): graph-based cycle detection по стенам
+7. ✅ Room renderer (полупрозрачный extruded polygon, alpha=0.15)
 
-**Итог:** Полноценный многоэтажный редактор.
+**Коммит:** `7888c02022`. Полноценный многоэтажный редактор.
 
 ---
 
