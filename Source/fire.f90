@@ -33,7 +33,7 @@ INTEGER :: NVAR_TO_SEND
 INTEGER :: NVAR_TO_RECEIVE
 
 
-PUBLIC COMBUSTION_LOAD_BALANCED,COMBUSTION_BC,CONDENSATION_EVAPORATION,GET_FLAME_TEMPERATURE
+PUBLIC COMBUSTION_LOAD_BALANCED,COMBUSTION_BC,CONDENSATION_EVAPORATION,GET_FLAME_TEMPERATURE,TRANSFER_MLR_TO_FIRE,TRANSFER_MLR_FROM_VENTS
 
 CONTAINS
 
@@ -41,7 +41,9 @@ SUBROUTINE COMBUSTION_LOAD_BALANCED(T,DT)
 
 USE SOOT_ROUTINES, ONLY: SOOT_SURFACE_OXIDATION
 USE COMP_FUNCTIONS, ONLY: CURRENT_TIME
+#ifdef WITH_SUNDIALS
 USE CHEMCONS, ONLY: CVODE_WARNING_CELLS,INIT_CVODE_WARN_MESSAGES
+#endif
 REAL(EB), INTENT(IN) :: T,DT
 INTEGER :: NM,ICC,JCC
 REAL(EB) :: TNOW
@@ -54,16 +56,20 @@ T_CHEM_COMM = 0._EB ! Chemistry load distribution communication time
 ! Set CVODES options
 IF (.NOT. COMBUSTION_INIT) THEN
    COMBUSTION_INIT = .TRUE.
+#ifdef WITH_SUNDIALS
    NVAR_TO_SEND = N_TRACKED_SPECIES +7 ! NS, TEMP, RHO, PRES, MU, DELTA, VOL, IGN_ZN
    NVAR_TO_RECEIVE = N_TRACKED_SPECIES +4 ! NS, Q_OUT, MIX_TIME_OUT, CHI_R_OUT, CHEM_SUBIT_TMP_OUT
    CALL INIT_CVODE_WARN_MESSAGES()
+#endif
 ENDIF
 
 DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
    CALL POINT_TO_MESH(NM)
    Q     = 0._EB
    CHI_R = 0._EB
+#ifdef WITH_SUNDIALS
    CVODE_WARNING_CELLS = 0
+#endif
    IF (CC_IBM) THEN
       DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
          DO JCC=1,CUT_CELL(ICC)%NCELL
@@ -117,7 +123,9 @@ Q_EXISTS =  .FALSE.
 
 !------
 !STEP1: Decide chemically active cells and cut-cells
+!       For serial runs with FDS5_CHEM_LOOP, skip pre-scan (done inline in STEP2).
 !------
+IF (N_MPI_PROCESSES > 1 .OR. .NOT. FDS5_CHEM_LOOP) THEN
 NCHEM_ACTIVE_CELLS_AND_CC=0
 DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
    CALL POINT_TO_MESH(NM)
@@ -130,7 +138,7 @@ DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          DO I=1,IBAR
             ZZ_GET = ZZ(I,J,K,1:N_TRACKED_SPECIES)
             PRES = PBAR(K,PRESSURE_ZONE(I,J,K)) + RHO(I,J,K)*(H(I,J,K)-KRES(I,J,K))
-            CALL CHECK_CHEMICALLY_ACTIVE_STATE(ZZ_GET, TMP(I,J,K), I, J, K, .FALSE., IS_CHEM_ACTIVE, IGN_ZN)
+            CALL CHECK_CHEMICALLY_ACTIVE_STATE(ZZ_GET, TMP(I,J,K), I, J, K, .FALSE., IS_CHEM_ACTIVE, IGN_ZN, NM)
             IF (STOP_STATUS/=NO_STOP) RETURN
             IF (.NOT. IS_CHEM_ACTIVE) CYCLE
             NCHEM_ACTIVE_CELLS_AND_CC = NCHEM_ACTIVE_CELLS_AND_CC + 1
@@ -164,7 +172,7 @@ DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
             IF ( ABS(CUT_CELL(ICC)%VOLUME(JCC)/VCELL) <  1.E-12_EB ) CYCLE
             ZZ_GET = CUT_CELL(ICC)%ZZ(1:N_TRACKED_SPECIES,JCC)
             PRES = PBAR(K,PRESSURE_ZONE(I,J,K)) + RHO(I,J,K)*(H(I,J,K)-KRES(I,J,K))
-            CALL CHECK_CHEMICALLY_ACTIVE_STATE(ZZ_GET, CUT_CELL(ICC)%TMP(JCC), I, J, K, .TRUE., IS_CHEM_ACTIVE, IGN_ZN)
+            CALL CHECK_CHEMICALLY_ACTIVE_STATE(ZZ_GET, CUT_CELL(ICC)%TMP(JCC), I, J, K, .TRUE., IS_CHEM_ACTIVE, IGN_ZN, NM)
             IF (STOP_STATUS/=NO_STOP) RETURN
             IF (.NOT. IS_CHEM_ACTIVE) CYCLE
             NCHEM_ACTIVE_CELLS_AND_CC = NCHEM_ACTIVE_CELLS_AND_CC + 1
@@ -177,6 +185,23 @@ DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
    MESHES(NM)%NCHEM_ACTIVE_CELLS=NCHEM_ACTIVE_CELLS
    MESHES(NM)%NCHEM_ACTIVE_CC=NCHEM_ACTIVE_CC
 ENDDO
+ELSE
+   ! FDS5_CHEM_LOOP serial: no pre-scan, just zero diagnostic arrays
+   IF (REAC_SOURCE_CHECK) THEN
+      DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+         CALL POINT_TO_MESH(NM)
+         REAC_SOURCE_TERM=0._EB
+         Q_REAC=0._EB
+         IF (CC_IBM) THEN
+            DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
+               DO JCC=1,CUT_CELL(ICC)%NCELL
+                  CUT_CELL(ICC)%Q_REAC(:,JCC) = 0._EB
+               ENDDO
+            ENDDO
+         ENDIF
+      ENDDO
+   ENDIF
+ENDIF
 
 
 
@@ -218,7 +243,8 @@ CHEM_LOAD_BALANCE_IF : IF(N_MPI_PROCESSES > 1 .AND. DO_CHEM_LOAD_BALANCE) THEN
          ! Call combustion integration routine for Cartesian cell (I,J,K)
          CALL COMBUSTION_MODEL( T,DT,ZZ_GET,Q_OUT,MIX_TIME_OUT,CHI_R_OUT,&
                                 CHEM_SUBIT_TMP_OUT,REAC_SOURCE_TERM_TMP,Q_REAC_TMP,&
-                                MYTEMP,MYRHO,PRES,MYMU,DELTA,VOL,ZETA_0,IGN_ZN)
+                                MYTEMP,MYRHO,PRES,MYMU,DELTA,VOL,ZETA_0,IGN_ZN,&
+                                WALL_MLR_SUM_PTR=MESHES(NM)%WALL_MLR_SUM,NM=NM)
          !***************************************************************************************
          
          RESULTS_TO_SEND_ARRAY(1:N_TRACKED_SPECIES,INDX) = ZZ_GET
@@ -243,68 +269,140 @@ CHEM_LOAD_BALANCE_IF : IF(N_MPI_PROCESSES > 1 .AND. DO_CHEM_LOAD_BALANCE) THEN
    ENDIF !NCHEM_ACTIVE_CELLS_AND_CC_GLOBAL >0
 
 ELSE CHEM_LOAD_BALANCE_IF
-   
-   IF (NCHEM_ACTIVE_CELLS_AND_CC >0) THEN
-      ! Serial chemistry:
-      IF (COMBUSTION_ODE_SOLVER == CVODE_SOLVER) TNOW2 = CURRENT_TIME()
 
-      MESH_LOOP_SERIAL : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+   ! Serial chemistry:
+   IF (COMBUSTION_ODE_SOLVER == CVODE_SOLVER) TNOW2 = CURRENT_TIME()
+
+   ! FDS5-style single-pass loop (no pre-scan, direct IJK loop with inline activity check)
+   FDS5_CHEM_IF: IF (FDS5_CHEM_LOOP) THEN
+      DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          CALL POINT_TO_MESH(NM)
-
-         NCHEM_ACTIVE_CELLS = MESHES(NM)%NCHEM_ACTIVE_CELLS
-         NCHEM_ACTIVE_CC = MESHES(NM)%NCHEM_ACTIVE_CC
 
          IF (.NOT.ALL(REACTION%FAST_CHEMISTRY)) ALLOCATE(DZ_F0(N_REACTIONS))
 
-         DO NC=1,NCHEM_ACTIVE_CELLS
-            I=CHEM_ACTIVE_CELLS(NC,1); J=CHEM_ACTIVE_CELLS(NC,2); K= CHEM_ACTIVE_CELLS(NC,3)
-            IGN_ZN=CHEM_ACTIVE_CELLS(NC,4)
-            ZZ_GET = ZZ(I,J,K,1:N_TRACKED_SPECIES)
-            PRES = PBAR(K,PRESSURE_ZONE(I,J,K)) + RHO(I,J,K)*(H(I,J,K)-KRES(I,J,K))
-            DZZ = ZZ_GET ! store old ZZ for divergence term
-            !***************************************************************************************
-            ! Call combustion integration routine for Cartesian cell (I,J,K)
-            CALL COMBUSTION_MODEL( T,DT,ZZ_GET,Q(I,J,K),MIX_TIME(I,J,K),CHI_R(I,J,K),&
-                                   CHEM_SUBIT_TMP,REAC_SOURCE_TERM_TMP,Q_REAC_TMP,&
-                                   TMP(I,J,K),RHO(I,J,K),PRES, MU(I,J,K),&
-                                   LES_FILTER_WIDTH(I,J,K),DX(I)*DY(J)*DZ(K),ZETA_0,IGN_ZN,IIC=I,JJC=J,KKC=K )
-            !***************************************************************************************
-            !IF (STOP_STATUS/=NO_STOP) RETURN
-            IF (OUTPUT_CHEM_IT) CHEM_SUBIT(I,J,K) = CHEM_SUBIT_TMP
-            CALL SET_SPECIES_SOURCE_TERM_CELL(DT, I, J, K, ZZ_GET, DZZ, REAC_SOURCE_TERM_TMP, Q_REAC_TMP)
+         ! Cartesian cells: direct IJK loop
+         DO K=1,KBAR
+            DO J=1,JBAR
+               DO I=1,IBAR
+                  IF (SOLID_CELL(I,J,K)) CYCLE
+                  ZZ_GET = ZZ(I,J,K,1:N_TRACKED_SPECIES)
+                  CALL CHECK_CHEMICALLY_ACTIVE_STATE(ZZ_GET, TMP(I,J,K), I, J, K, .FALSE., IS_CHEM_ACTIVE, IGN_ZN, NM)
+                  IF (STOP_STATUS/=NO_STOP) RETURN
+                  IF (.NOT. IS_CHEM_ACTIVE) CYCLE
+                  PRES = PBAR(K,PRESSURE_ZONE(I,J,K)) + RHO(I,J,K)*(H(I,J,K)-KRES(I,J,K))
+                  DZZ = ZZ_GET ! store old ZZ for divergence term
+                  !***************************************************************************************
+                  ! Call combustion integration routine for Cartesian cell (I,J,K)
+                  CALL COMBUSTION_MODEL( T,DT,ZZ_GET,Q(I,J,K),MIX_TIME(I,J,K),CHI_R(I,J,K),&
+                                         CHEM_SUBIT_TMP,REAC_SOURCE_TERM_TMP,Q_REAC_TMP,&
+                                         TMP(I,J,K),RHO(I,J,K),PRES, MU(I,J,K),&
+                                         LES_FILTER_WIDTH(I,J,K),DX(I)*DY(J)*DZ(K),ZETA_0,IGN_ZN,IIC=I,JJC=J,KKC=K,&
+                                         WALL_MLR_SUM_PTR=MESHES(NM)%WALL_MLR_SUM,NM=NM )
+                  !***************************************************************************************
+                  IF (OUTPUT_CHEM_IT) CHEM_SUBIT(I,J,K) = CHEM_SUBIT_TMP
+                  CALL SET_SPECIES_SOURCE_TERM_CELL(DT, I, J, K, ZZ_GET, DZZ, REAC_SOURCE_TERM_TMP, Q_REAC_TMP)
+               ENDDO
+            ENDDO
          ENDDO
-         
-         ! Call chemistry on chemically active cut-cells
+
+         ! Cut-cells: direct loop with inline activity check
          IF (CC_IBM) THEN
             !$OMP DO SCHEDULE(DYNAMIC)
-            DO NC=1,NCHEM_ACTIVE_CC
-               ICC= CHEM_ACTIVE_CC(NC,1); JCC= CHEM_ACTIVE_CC(NC,2)
-               IGN_ZN=CHEM_ACTIVE_CC(NC,3)
+            DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
                CC => CUT_CELL(ICC); I = CC%IJK(IAXIS); J = CC%IJK(JAXIS); K = CC%IJK(KAXIS)
-               CC%CHI_R(JCC)    = 0._EB
-               ZZ_GET = CC%ZZ(1:N_TRACKED_SPECIES,JCC)
-               PRES = PBAR(K,PRESSURE_ZONE(I,J,K)) + RHO(I,J,K)*(H(I,J,K)-KRES(I,J,K))
-               DZZ = ZZ_GET ! store old ZZ for divergence term
-               !***************************************************************************************
-               ! Call combustion integration routine for CC%XX(JCC)
-               ! Note AUTO_IGNITION_TEMPERATURE here will apply to all cut-cells in Cartesian cell, currently 1.
-               CALL COMBUSTION_MODEL( T,DT,ZZ_GET,CC%Q(JCC),CC%MIX_TIME(JCC),&
-                                      CC%CHI_R(JCC),&
-                                      CHEM_SUBIT_TMP,REAC_SOURCE_TERM_TMP,Q_REAC_TMP,&
-                                      CC%TMP(JCC),CC%RHO(JCC),PRES,MU(I,J,K),&
-                                      LES_FILTER_WIDTH(I,J,K),CC%VOLUME(JCC),ZETA_0,IGN_ZN,IIC=I,JJC=J,KKC=K)
-               !***************************************************************************************
-               CALL SET_SPECIES_SOURCE_TERM_CUTCELL(DT, ICC, JCC, ZZ_GET, DZZ, REAC_SOURCE_TERM_TMP, Q_REAC_TMP)
-            END DO
+               VCELL = DX(I)*DY(J)*DZ(K)
+               IF (SOLID_CELL(I,J,K)) CYCLE
+               DO JCC=1,CC%NCELL
+                  ! Drop if cut-cell is very small compared to Cartesian cells:
+                  IF ( ABS(CUT_CELL(ICC)%VOLUME(JCC)/VCELL) < 1.E-12_EB ) CYCLE
+                  ZZ_GET = CC%ZZ(1:N_TRACKED_SPECIES,JCC)
+                  CALL CHECK_CHEMICALLY_ACTIVE_STATE(ZZ_GET, CUT_CELL(ICC)%TMP(JCC), I, J, K, .TRUE., IS_CHEM_ACTIVE, IGN_ZN, NM)
+                  IF (STOP_STATUS/=NO_STOP) RETURN
+                  IF (.NOT. IS_CHEM_ACTIVE) CYCLE
+                  PRES = PBAR(K,PRESSURE_ZONE(I,J,K)) + RHO(I,J,K)*(H(I,J,K)-KRES(I,J,K))
+                  CC%CHI_R(JCC)    = 0._EB
+                  DZZ = ZZ_GET ! store old ZZ for divergence term
+                  !***************************************************************************************
+                  ! Call combustion integration routine for CC%XX(JCC)
+                  ! Note AUTO_IGNITION_TEMPERATURE here will apply to all cut-cells in Cartesian cell, currently 1.
+                  CALL COMBUSTION_MODEL( T,DT,ZZ_GET,CC%Q(JCC),CC%MIX_TIME(JCC),&
+                                         CC%CHI_R(JCC),&
+                                         CHEM_SUBIT_TMP,REAC_SOURCE_TERM_TMP,Q_REAC_TMP,&
+                                         CC%TMP(JCC),CC%RHO(JCC),PRES,MU(I,J,K),&
+                                         LES_FILTER_WIDTH(I,J,K),CC%VOLUME(JCC),ZETA_0,IGN_ZN,IIC=I,JJC=J,KKC=K,&
+                                         WALL_MLR_SUM_PTR=MESHES(NM)%WALL_MLR_SUM,NM=NM)
+                  !***************************************************************************************
+                  CALL SET_SPECIES_SOURCE_TERM_CUTCELL(DT, ICC, JCC, ZZ_GET, DZZ, REAC_SOURCE_TERM_TMP, Q_REAC_TMP)
+               ENDDO
+            ENDDO
          ENDIF
          IF(ALLOCATED(DZ_F0)) DEALLOCATE(DZ_F0)
          IF (STOP_STATUS/=NO_STOP) RETURN
-      ENDDO  MESH_LOOP_SERIAL
+      ENDDO
 
-      IF (COMBUSTION_ODE_SOLVER == CVODE_SOLVER) THEN
-         T_CHEM_ODE = T_CHEM_ODE+CURRENT_TIME()-TNOW2
-      ENDIF
-   ENDIF !NCHEM_ACTIVE_CELLS_AND_CC >0
+   ELSE FDS5_CHEM_IF
+      ! FDS6-style serial: use pre-scanned CHEM_ACTIVE_CELLS/CHEM_ACTIVE_CC arrays
+      IF (NCHEM_ACTIVE_CELLS_AND_CC >0) THEN
+         MESH_LOOP_SERIAL : DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+            CALL POINT_TO_MESH(NM)
+
+            NCHEM_ACTIVE_CELLS = MESHES(NM)%NCHEM_ACTIVE_CELLS
+            NCHEM_ACTIVE_CC = MESHES(NM)%NCHEM_ACTIVE_CC
+
+            IF (.NOT.ALL(REACTION%FAST_CHEMISTRY)) ALLOCATE(DZ_F0(N_REACTIONS))
+
+            DO NC=1,NCHEM_ACTIVE_CELLS
+               I=CHEM_ACTIVE_CELLS(NC,1); J=CHEM_ACTIVE_CELLS(NC,2); K= CHEM_ACTIVE_CELLS(NC,3)
+               IGN_ZN=CHEM_ACTIVE_CELLS(NC,4)
+               ZZ_GET = ZZ(I,J,K,1:N_TRACKED_SPECIES)
+               PRES = PBAR(K,PRESSURE_ZONE(I,J,K)) + RHO(I,J,K)*(H(I,J,K)-KRES(I,J,K))
+               DZZ = ZZ_GET ! store old ZZ for divergence term
+               !***************************************************************************************
+               ! Call combustion integration routine for Cartesian cell (I,J,K)
+               CALL COMBUSTION_MODEL( T,DT,ZZ_GET,Q(I,J,K),MIX_TIME(I,J,K),CHI_R(I,J,K),&
+                                      CHEM_SUBIT_TMP,REAC_SOURCE_TERM_TMP,Q_REAC_TMP,&
+                                      TMP(I,J,K),RHO(I,J,K),PRES, MU(I,J,K),&
+                                      LES_FILTER_WIDTH(I,J,K),DX(I)*DY(J)*DZ(K),ZETA_0,IGN_ZN,IIC=I,JJC=J,KKC=K,&
+                                      WALL_MLR_SUM_PTR=MESHES(NM)%WALL_MLR_SUM,NM=NM )
+               !***************************************************************************************
+               !IF (STOP_STATUS/=NO_STOP) RETURN
+               IF (OUTPUT_CHEM_IT) CHEM_SUBIT(I,J,K) = CHEM_SUBIT_TMP
+               CALL SET_SPECIES_SOURCE_TERM_CELL(DT, I, J, K, ZZ_GET, DZZ, REAC_SOURCE_TERM_TMP, Q_REAC_TMP)
+            ENDDO
+
+            ! Call chemistry on chemically active cut-cells
+            IF (CC_IBM) THEN
+               !$OMP DO SCHEDULE(DYNAMIC)
+               DO NC=1,NCHEM_ACTIVE_CC
+                  ICC= CHEM_ACTIVE_CC(NC,1); JCC= CHEM_ACTIVE_CC(NC,2)
+                  IGN_ZN=CHEM_ACTIVE_CC(NC,3)
+                  CC => CUT_CELL(ICC); I = CC%IJK(IAXIS); J = CC%IJK(JAXIS); K = CC%IJK(KAXIS)
+                  CC%CHI_R(JCC)    = 0._EB
+                  ZZ_GET = CC%ZZ(1:N_TRACKED_SPECIES,JCC)
+                  PRES = PBAR(K,PRESSURE_ZONE(I,J,K)) + RHO(I,J,K)*(H(I,J,K)-KRES(I,J,K))
+                  DZZ = ZZ_GET ! store old ZZ for divergence term
+                  !***************************************************************************************
+                  ! Call combustion integration routine for CC%XX(JCC)
+                  ! Note AUTO_IGNITION_TEMPERATURE here will apply to all cut-cells in Cartesian cell, currently 1.
+                  CALL COMBUSTION_MODEL( T,DT,ZZ_GET,CC%Q(JCC),CC%MIX_TIME(JCC),&
+                                         CC%CHI_R(JCC),&
+                                         CHEM_SUBIT_TMP,REAC_SOURCE_TERM_TMP,Q_REAC_TMP,&
+                                         CC%TMP(JCC),CC%RHO(JCC),PRES,MU(I,J,K),&
+                                         LES_FILTER_WIDTH(I,J,K),CC%VOLUME(JCC),ZETA_0,IGN_ZN,IIC=I,JJC=J,KKC=K,&
+                                         WALL_MLR_SUM_PTR=MESHES(NM)%WALL_MLR_SUM,NM=NM)
+                  !***************************************************************************************
+                  CALL SET_SPECIES_SOURCE_TERM_CUTCELL(DT, ICC, JCC, ZZ_GET, DZZ, REAC_SOURCE_TERM_TMP, Q_REAC_TMP)
+               END DO
+            ENDIF
+            IF(ALLOCATED(DZ_F0)) DEALLOCATE(DZ_F0)
+            IF (STOP_STATUS/=NO_STOP) RETURN
+         ENDDO  MESH_LOOP_SERIAL
+      ENDIF !NCHEM_ACTIVE_CELLS_AND_CC >0
+   ENDIF FDS5_CHEM_IF
+
+   IF (COMBUSTION_ODE_SOLVER == CVODE_SOLVER) THEN
+      T_CHEM_ODE = T_CHEM_ODE+CURRENT_TIME()-TNOW2
+   ENDIF
 ENDIF CHEM_LOAD_BALANCE_IF
 
 ! This volume refactoring is needed for RADIATION_FVM (CHI_R, Q) and plotting slices:
@@ -314,7 +412,7 @@ IF(CC_IBM) THEN
       DO ICC=1,MESHES(NM)%N_CUTCELL_MESH
          CC => CUT_CELL(ICC); I = CC%IJK(IAXIS); J = CC%IJK(JAXIS); K = CC%IJK(KAXIS)
          VCELL = DX(I)*DY(J)*DZ(K)
-         IF (CELL(CELL_INDEX(I,J,K))%SOLID) CYCLE ! Cycle in case Cartesian cell inside OBSTS.
+         IF (SOLID_CELL(I,J,K)) CYCLE ! Cycle in case Cartesian cell inside OBSTS.
          DO JCC=1,CC%NCELL
             Q(I,J,K) = Q(I,J,K)+CC%Q(JCC)*CC%VOLUME(JCC)
             CHI_R(I,J,K) = CHI_R(I,J,K) + CC%CHI_R(JCC)*CC%Q(JCC)*CC%VOLUME(JCC)
@@ -367,13 +465,14 @@ ENDDO REACTION_LOOP
 END SUBROUTINE CHECK_REACTION
 
 
-SUBROUTINE CHECK_CHEMICALLY_ACTIVE_STATE (ZZ_GET, TMP, I, J , K, IS_CUT_CELL, CHEM_ACTIVE, IGN_ZN)
+SUBROUTINE CHECK_CHEMICALLY_ACTIVE_STATE (ZZ_GET, TMP, I, J , K, IS_CUT_CELL, CHEM_ACTIVE, IGN_ZN, NM)
 
 USE DEVICE_VARIABLES, ONLY: DEVICE
 USE PHYSICAL_FUNCTIONS, ONLY: IS_REALIZABLE, CALC_EQUIV_RATIO
 USE COMPLEX_GEOMETRY, ONLY : CC_CGSC, CC_GASPHASE
+USE MESH_VARIABLES, ONLY: MESHES
 USE CHEMCONS, ONLY: EQUIV_RATIO_CHECK,MIN_EQUIV_RATIO,MAX_EQUIV_RATIO,N_IGNITION_ZONES,IGNITION_ZONES,USE_MIXED_ZN_AFT_TMP
-                                  
+
 
 REAL(EB), INTENT(IN) :: ZZ_GET(1:N_TRACKED_SPECIES)
 REAL(EB), INTENT(IN) :: TMP
@@ -381,6 +480,7 @@ INTEGER, INTENT(IN), OPTIONAL :: I, J, K
 LOGICAL, INTENT(IN) :: IS_CUT_CELL
 LOGICAL, INTENT(INOUT) :: CHEM_ACTIVE
 INTEGER, INTENT(INOUT) :: IGN_ZN
+INTEGER, INTENT(IN) :: NM
 LOGICAL :: DO_REACTION, REALIZABLE, LES_EQUIV_CHECK
 REAL(EB) :: EQUIV
 INTEGER :: IZ
@@ -389,7 +489,7 @@ CHEM_ACTIVE = .TRUE.
 IGN_ZN = -1
 LES_EQUIV_CHECK = .FALSE.
 
-IF (CELL(CELL_INDEX(I,J,K))%SOLID) THEN
+IF (MESHES(NM)%SOLID_CELL(I,J,K)) THEN
    CHEM_ACTIVE = .FALSE.
    RETURN
 ENDIF
@@ -456,12 +556,12 @@ IF (.NOT.DO_REACTION) THEN
 ENDIF
 
 ! Check equivalence ratio of the mixture. Avoid chemistry calculation for very lean and rich cases.
-IF (COMBUSTION_ODE_SOLVER==CVODE_SOLVER .AND. EQUIV_RATIO_CHECK) THEN
+IF (COMBUSTION_ODE_SOLVER==CVODE_SOLVER .AND. EQUIV_RATIO_CHECK .AND. N_REACTIONS > 1) THEN
    CALL CALC_EQUIV_RATIO(ZZ_GET(1:N_TRACKED_SPECIES), EQUIV)
-   IF(EQUIV <  MIN_EQUIV_RATIO .OR. EQUIV > MAX_EQUIV_RATIO) THEN 
+   IF(EQUIV <  MIN_EQUIV_RATIO .OR. EQUIV > MAX_EQUIV_RATIO) THEN
       CHEM_ACTIVE = .FALSE.
       RETURN
-   ENDIF   
+   ENDIF
 ENDIF
 END SUBROUTINE CHECK_CHEMICALLY_ACTIVE_STATE
 
@@ -771,17 +871,19 @@ END SUBROUTINE GATHER_CELLS_FROM_MPI_PROCESSES
 
 
 SUBROUTINE COMBUSTION_MODEL(T,DT,ZZ_GET,Q_OUT,MIX_TIME_OUT,CHI_R_OUT,CHEM_SUBIT_OUT,REAC_SOURCE_TERM_OUT,Q_REAC_OUT,&
-                            TMP_IN,RHO_IN,PRES_IN,MU_IN,DELTA,CELL_VOLUME,ZETA_0_IN,IGN_ZN,IIC,JJC,KKC)
+                            TMP_IN,RHO_IN,PRES_IN,MU_IN,DELTA,CELL_VOLUME,ZETA_0_IN,IGN_ZN,IIC,JJC,KKC,WALL_MLR_SUM_PTR,NM)
 USE MATH_FUNCTIONS, ONLY: EVALUATE_RAMP
 USE PHYSICAL_FUNCTIONS, ONLY: GET_REALIZABLE_MF
 USE COMP_FUNCTIONS, ONLY: SHUTDOWN
 USE CHEMCONS, ONLY: ODE_MIN_ATOL
+USE MESH_POINTERS, ONLY: CCC
 INTEGER, INTENT(IN) :: IGN_ZN
-INTEGER, INTENT(IN), OPTIONAL :: IIC,JJC,KKC
+INTEGER, INTENT(IN), OPTIONAL :: IIC,JJC,KKC,NM
 REAL(EB), INTENT(IN) :: T,DT,RHO_IN,PRES_IN,MU_IN,DELTA,CELL_VOLUME,ZETA_0_IN
 REAL(EB), INTENT(OUT) :: Q_OUT,MIX_TIME_OUT,CHI_R_OUT,REAC_SOURCE_TERM_OUT(N_TRACKED_SPECIES),Q_REAC_OUT(N_REACTIONS)
 INTEGER, INTENT(OUT) :: CHEM_SUBIT_OUT
 REAL(EB), INTENT(INOUT) :: ZZ_GET(1:N_TRACKED_SPECIES)
+REAL(EB), INTENT(IN), OPTIONAL :: WALL_MLR_SUM_PTR(:,:,:)  !< Pointer to WALL_MLR_SUM array
 REAL(EB) :: A1(1:N_TRACKED_SPECIES),A2(1:N_TRACKED_SPECIES),A4(1:N_TRACKED_SPECIES),ZETA,ZETA_0,&
             DT_SUB,DT_SUB_NEW,DT_ITER,ZZ_STORE(1:N_TRACKED_SPECIES,1:4),TV(1:3,1:N_TRACKED_SPECIES),CELL_MASS,&
             ZZ_0(1:N_TRACKED_SPECIES),ZZ_DIFF(1:3,1:N_TRACKED_SPECIES),ZZ_MIXED(1:N_TRACKED_SPECIES),&
@@ -790,8 +892,11 @@ REAL(EB) :: A1(1:N_TRACKED_SPECIES),A2(1:N_TRACKED_SPECIES),A4(1:N_TRACKED_SPECI
             Q_REAC_SUM(1:N_REACTIONS),Q_SUM_CHI_R,CHI_R_SUM,TIME_RAMP_FACTOR,&
             TOTAL_MIXED_MASS_1,TOTAL_MIXED_MASS_2,TOTAL_MIXED_MASS_4,TOTAL_MIXED_MASS,&
             ZETA_1,ZETA_2,ZETA_4,D_F,TMP_IN,K_SGS,DT_SUB_OLD,ERR_EST(N_TRACKED_SPECIES),ERR_TOL(N_TRACKED_SPECIES),ERR_TINY,&
-            ZZ_TEMP(1:N_TRACKED_SPECIES),ATOL(1:N_TRACKED_SPECIES)
+            ZZ_TEMP(1:N_TRACKED_SPECIES),ATOL(1:N_TRACKED_SPECIES),&
+            MLR_CELL,CCC_LOCAL,ZETA_CURRENT,CHI_R_LOCAL,VEL_RMS
 INTEGER :: NR,NS,ITER,TVI,RICH_ITER,TIME_ITER,RICH_ITER_MAX
+INTEGER, SAVE :: DEBUG_COUNT = 0
+LOGICAL, SAVE :: DEBUG_PRINTED = .FALSE.
 REAL(EB), PARAMETER :: C_U=0.4_EB,TAU_EPS=1.E-10_EB
 INTEGER, PARAMETER :: TV_ITER_MIN=5
 LOGICAL :: TV_FLUCT(1:N_TRACKED_SPECIES),EXTINCT,NO_REACTIONS,NO_REAC_2,NO_REAC_4
@@ -801,9 +906,39 @@ ZZ_0 = ZZ_GET
 EXTINCT = .FALSE.
 NO_REACTIONS = .FALSE.
 
-! Determine the mixing time for this cell
+!===============================================================
+! VARIANT B: Early skip for non-reacting cells (FDS5_COMBUSTION_EARLY_SKIP)
+! If no fuel is present in any reaction, skip the entire combustion model
+!===============================================================
+EARLY_SKIP_IF: IF (FDS5_COMBUSTION_EARLY_SKIP) THEN
+   FUEL_CHECK: DO NR=1,N_REACTIONS
+      RN => REACTION(NR)
+      IF (RN%FUEL_SMIX_INDEX > 0 .AND. ZZ_0(RN%FUEL_SMIX_INDEX) > ZZ_MIN_GLOBAL) THEN
+         ! Fuel is present — proceed with chemistry
+         EXIT EARLY_SKIP_IF
+      ENDIF
+   ENDDO FUEL_CHECK
+   ! No fuel in any reaction — skip entirely
+   NO_REACTIONS = .TRUE.
+   ZETA = ZETA_0_IN
+   Q_OUT = 0._EB
+   MIX_TIME_OUT = 0._EB
+   CHI_R_OUT = 0._EB
+   CHEM_SUBIT_OUT = 0
+   REAC_SOURCE_TERM_OUT(:) = 0._EB
+   Q_REAC_OUT(:) = 0._EB
+   RETURN
+END IF EARLY_SKIP_IF
+
+! NOTE: Simplified chemistry disabled due to MLR_BASED_HRR conflict
+! Chemistry is handled via MLR-based approach, not detailed reaction kinetics
+! SIMPLIFIED_PHYSICS mode only affects turbulence and pressure iterations
+
+! Determine the mixing time for this cell (full chemistry mode)
 IF (FIXED_MIX_TIME>0._EB) THEN
    MIX_TIME_OUT=FIXED_MIX_TIME
+   K_SGS = (MU_IN/(RHO_IN*C_DEARDORFF*DELTA))**2
+   VEL_RMS = SQRT(TWTH*K_SGS)
 ELSE
    D_F=0._EB
    DO NR =1,N_REACTIONS
@@ -814,11 +949,13 @@ ELSE
    SELECT CASE(SIM_MODE)
       CASE DEFAULT
          K_SGS = (MU_IN/(RHO_IN*C_DEARDORFF*DELTA))**2                 ! FDS Tech Guide (4.17)
+         VEL_RMS = SQRT(TWTH*K_SGS)                                    ! SGS velocity scale for FDS5 flame speed model
          TAU_U = C_U*DELTA/SQRT(TWTH*(K_SGS+TAU_EPS))                  ! FDS Tech Guide (5.15)
          TAU_G = SQRT(2._EB*DELTA/(GRAV+TAU_EPS))                      ! FDS Tech Guide (5.16)
          MIX_TIME_OUT= MAX(TAU_CHEM,MIN(TAU_D,TAU_U,TAU_G,TAU_FLAME))  ! FDS Tech Guide (5.13)
       CASE (DNS_MODE)
          MIX_TIME_OUT= MAX(TAU_CHEM,TAU_D)
+         VEL_RMS = 0._EB                                               ! DNS: no SGS velocity
    END SELECT
 ENDIF
 
@@ -866,9 +1003,12 @@ INTEGRATION_LOOP: DO TIME_ITER = 1,MAX_CHEMISTRY_SUBSTEPS
    IF (SUPPRESSION) THEN
       DO NR=1,N_REACTIONS
          RN=>REACTION(NR)
-         IF (ZZ_0(RN%FUEL_SMIX_INDEX)>ZZ_MIN_GLOBAL .AND. ZZ_0(RN%AIR_SMIX_INDEX)>ZZ_MIN_GLOBAL) THEN
-            CALL CHECK_AUTO_IGNITION(EXTINCT,TMP_IN,RN%AUTO_IGNITION_TEMPERATURE,IIC,JJC,KKC,NR)
-            IF (.NOT.EXTINCT) EXIT
+         ! note: RN%AIR_SMIX_INDEX = -1 for a decomposition reaction, A => B+C
+         IF (RN%AIR_SMIX_INDEX > 0) THEN
+            IF (ZZ_0(RN%FUEL_SMIX_INDEX)>ZZ_MIN_GLOBAL .AND. ZZ_0(RN%AIR_SMIX_INDEX)>ZZ_MIN_GLOBAL) THEN
+               CALL CHECK_AUTO_IGNITION(EXTINCT,TMP_IN,RN%AUTO_IGNITION_TEMPERATURE,IIC,JJC,KKC,NR)
+               IF (.NOT.EXTINCT) EXIT
+            ENDIF
          ENDIF
       ENDDO
    ENDIF
@@ -882,7 +1022,8 @@ INTEGRATION_LOOP: DO TIME_ITER = 1,MAX_CHEMISTRY_SUBSTEPS
          ! May be used with N_FIXED_CHEMISTRY_SUBSTEPS, but default mode is DT_SUB=DT for fast chemistry
 
          CALL FIRE_FORWARD_EULER(ZZ_MIXED_NEW,ZZ_MIXED,ZZ_0,ZETA,ZETA_0,DT_SUB,TMP_IN,RHO_HAT,&
-                                 CELL_MASS,TAU_MIX,Q_REAC_SUB,TOTAL_MIXED_MASS,NO_REACTIONS)
+                                 CELL_MASS,TAU_MIX,Q_REAC_SUB,TOTAL_MIXED_MASS,NO_REACTIONS,&
+                                 VEL_RMS,PRES_IN,DELTA)
          ZETA_0 = ZETA
          ZZ_MIXED = ZZ_MIXED_NEW
 
@@ -894,12 +1035,12 @@ INTEGRATION_LOOP: DO TIME_ITER = 1,MAX_CHEMISTRY_SUBSTEPS
             DT_SUB = MIN(DT_SUB_NEW,DT-DT_ITER)
             ! FDS Tech Guide (E.3), (E.4), (E.5)
             CALL FIRE_RK2(A1,ZZ_MIXED,ZZ_0,ZETA_1,ZETA_0,DT_SUB,1,TMP_IN,RHO_HAT,CELL_MASS,TAU_MIX,&
-                        Q_REAC_1,TOTAL_MIXED_MASS_1,NO_REACTIONS)
+                        Q_REAC_1,TOTAL_MIXED_MASS_1,NO_REACTIONS,VEL_RMS,PRES_IN,DELTA)
             IF (NO_REACTIONS) EXIT RICH_EX_LOOP
             CALL FIRE_RK2(A2,ZZ_MIXED,ZZ_0,ZETA_2,ZETA_0,DT_SUB,2,TMP_IN,RHO_HAT,CELL_MASS,TAU_MIX,&
-                        Q_REAC_2,TOTAL_MIXED_MASS_2,NO_REAC_2)
+                        Q_REAC_2,TOTAL_MIXED_MASS_2,NO_REAC_2,VEL_RMS,PRES_IN,DELTA)
             CALL FIRE_RK2(A4,ZZ_MIXED,ZZ_0,ZETA_4,ZETA_0,DT_SUB,4,TMP_IN,RHO_HAT,CELL_MASS,TAU_MIX,&
-                        Q_REAC_4,TOTAL_MIXED_MASS_4,NO_REAC_4)
+                        Q_REAC_4,TOTAL_MIXED_MASS_4,NO_REAC_4,VEL_RMS,PRES_IN,DELTA)
             ! Species Error Analysis
             ERR_EST = ABS((4._EB*A4-5._EB*A2+A1))/45._EB ! FDS Tech Guide (E.8)
             ZZ_TEMP = (4._EB*A4-A2)*ONTH ! FDS Tech Guide (E.7)
@@ -982,9 +1123,103 @@ INTEGRATION_LOOP: DO TIME_ITER = 1,MAX_CHEMISTRY_SUBSTEPS
 ENDDO INTEGRATION_LOOP
 
 
+!===============================================================
 ! Compute heat release rate
+! Two modes:
+! 1. MLR_BASED_HRR: Q = MLR * H_c * CCC / CELL_VOLUME
+! 2. Default: Use Q_REAC_SUM from REACTION_RATE
+!===============================================================
 
-Q_OUT = -RHO_IN*SUM(SPECIES_MIXTURE%H_F*(ZZ_GET-ZZ_0))/DT ! FDS Tech Guide (5.47)
+! DEBUG: Print once to verify MLR_BASED_HRR status
+IF (.NOT. DEBUG_PRINTED) THEN
+    DEBUG_PRINTED = .TRUE.
+    WRITE(0,*) '[INFO] MLR_BASED_HRR = ', MLR_BASED_HRR
+    WRITE(0,*) '[INFO] N_REACTIONS = ', N_REACTIONS
+    IF (N_REACTIONS > 0) THEN
+        WRITE(0,*) '[INFO] REACTION(1)%HEAT_OF_COMBUSTION = ', REACTION(1)%HEAT_OF_COMBUSTION
+    ENDIF
+ENDIF
+
+IF (MLR_BASED_HRR) THEN
+    !===========================================================
+    ! УПРОЩЁННЫЙ РАСЧЁТ HRR НА ОСНОВЕ MLR
+    ! Формула: Q = Ψ × H_c × CCC / CELL_VOLUME
+    ! где Ψ = MLR из WALL_BC (кг/с)
+    !       H_c = HEAT_OF_COMBUSTION из &REAC (Дж/кг)
+    !       CCC = (1 - ZETA) × (1 - CHI_R) - коэффициент полноты сгорания
+    !===========================================================
+    ! Получаем MLR для этой ячейки из WALL_MLR_SUM + VENT_MLR_SUM
+    MLR_CELL = 0._EB
+    IF (PRESENT(WALL_MLR_SUM_PTR) .AND. PRESENT(IIC) .AND. PRESENT(JJC) .AND. PRESENT(KKC) .AND. PRESENT(NM)) THEN
+        MLR_CELL = WALL_MLR_SUM_PTR(IIC,JJC,KKC)
+        ! Add MLR from VENTs
+        MLR_CELL = MLR_CELL + MESHES(NM)%VENT_MLR_SUM(IIC,JJC,KKC)
+    ENDIF
+
+    ! Расчёт CCC = (1 - ZETA) × (1 - CHI_R)
+    ! ZETA изменяется от ZETA_0 до 0 по экспоненте
+    ZETA_CURRENT = ZETA_0_IN * EXP(-DT / TAU_MIX)
+
+    ! Получаем CHI_R из первой реакции
+    CHI_R_LOCAL = 0._EB
+    IF (N_REACTIONS > 0) THEN
+        RN => REACTION(1)
+        CHI_R_LOCAL = RN%CHI_R * EVALUATE_RAMP(T, RN%RAMP_CHI_R_INDEX)
+    ENDIF
+
+    ! Расчёт коэффициента полноты сгорания
+    ! Если задан CCC_FIXED пользователем (0-1), используем его
+    ! Иначе рассчитываем процедурно: CCC = (1 - ZETA) × (1 - CHI_R)
+    IF (N_REACTIONS > 0 .AND. REACTION(1)%CCC_FIXED >= 0._EB) THEN
+        CCC_LOCAL = REACTION(1)%CCC_FIXED
+    ELSE
+        CCC_LOCAL = (1._EB - ZETA_CURRENT) * (1._EB - CHI_R_LOCAL)
+    ENDIF
+
+    ! Сохраняем CCC в массив для вывода через DEVC
+    IF (PRESENT(IIC) .AND. PRESENT(JJC) .AND. PRESENT(KKC)) THEN
+        CCC(IIC,JJC,KKC) = CCC_LOCAL
+    ENDIF
+
+    ! DEBUG: Print first 5 calls only
+    IF (DEBUG_COUNT < 5) THEN
+        DEBUG_COUNT = DEBUG_COUNT + 1
+        WRITE(0,*) '[DEBUG] Step ', DEBUG_COUNT, ': MLR=', MLR_CELL, ' CCC=', CCC_LOCAL
+    ENDIF
+
+    ! Расчёт HRR по формуле Q = MLR * H_c * CCC
+    ! MLR в кг/с, H_c в Дж/кг, CCC безразмерный, результат в Вт
+    ! Делим на CELL_VOLUME для получения Вт/м³
+    IF (MLR_CELL > TWO_EPSILON_EB .AND. N_REACTIONS > 0) THEN
+        RN => REACTION(1)
+        IF (RN%HEAT_OF_COMBUSTION > TWO_EPSILON_EB) THEN
+            Q_OUT = MLR_CELL * RN%HEAT_OF_COMBUSTION * CCC_LOCAL / CELL_VOLUME
+        ELSE
+            ! Fallback на Q_REAC_SUM если H_c не задан
+            IF (ANY(Q_REAC_SUM > TWO_EPSILON_EB)) THEN
+                Q_OUT = SUM(Q_REAC_SUM) / CELL_VOLUME
+            ELSE
+                Q_OUT = -RHO_IN*SUM(SPECIES_MIXTURE%H_F*(ZZ_GET-ZZ_0))/DT
+            ENDIF
+        ENDIF
+    ELSE
+        ! Fallback на оригинальную формулу если MLR = 0
+        IF (ANY(Q_REAC_SUM > TWO_EPSILON_EB)) THEN
+            Q_OUT = SUM(Q_REAC_SUM) / CELL_VOLUME
+        ELSE
+            Q_OUT = -RHO_IN*SUM(SPECIES_MIXTURE%H_F*(ZZ_GET-ZZ_0))/DT
+        ENDIF
+    ENDIF
+ELSE
+    ! ОРИГИНАЛЬНЫЙ РАСЧЁТ - ИСПРАВЛЕННАЯ ВЕРСИЯ
+    ! Используем Q_REAC_SUM вместо H_F формулы
+    IF (ANY(Q_REAC_SUM > TWO_EPSILON_EB)) THEN
+        Q_OUT = SUM(Q_REAC_SUM) / CELL_VOLUME
+    ELSE
+        Q_OUT = -RHO_IN*SUM(SPECIES_MIXTURE%H_F*(ZZ_GET-ZZ_0))/DT
+    ENDIF
+ENDIF
+!===============================================================
 
 ! Extinction model
 
@@ -1033,6 +1268,167 @@ IF (REAC_SOURCE_CHECK) THEN
 ENDIF
 
 END SUBROUTINE COMBUSTION_MODEL
+
+
+!> \brief Transfer MLR from WALL boundary cells to FIRE mesh cells for MLR-based HRR calculation
+!> \param NM Mesh number
+!> \details This subroutine accumulates MLR contributions from all wall surfaces into
+!> MESHES(NM)%WALL_MLR_SUM array, which is then used in COMBUSTION_MODEL to calculate HRR
+
+SUBROUTINE TRANSFER_MLR_TO_FIRE(NM)
+USE MESH_POINTERS
+USE MESH_VARIABLES, ONLY: MESHES
+INTEGER, INTENT(IN) :: NM
+INTEGER :: IW, I, J, K
+TYPE(BOUNDARY_COORD_TYPE), POINTER :: BC
+TYPE(BOUNDARY_PROP1_TYPE), POINTER :: B1
+REAL(EB) :: TOTAL_MLR
+
+! Initialize WALL_MLR_SUM to zero
+IF (ALLOCATED(MESHES(NM)%WALL_MLR_SUM)) THEN
+    MESHES(NM)%WALL_MLR_SUM = 0._EB
+ELSE
+    RETURN
+ENDIF
+
+TOTAL_MLR = 0._EB
+
+! Sum MLR contributions from all external and internal wall cells
+! Note: BC%IIG, JJG, KKG are guaranteed to be within mesh bounds
+DO IW = 1, N_EXTERNAL_WALL_CELLS + N_INTERNAL_WALL_CELLS
+    B1 => BOUNDARY_PROP1(WALL(IW)%B1_INDEX)
+    BC => BOUNDARY_COORD(WALL(IW)%BC_INDEX)
+
+    I = BC%IIG
+    J = BC%JJG
+    K = BC%KKG
+
+    ! Add MLR from this surface to the cell
+    MESHES(NM)%WALL_MLR_SUM(I,J,K) = MESHES(NM)%WALL_MLR_SUM(I,J,K) + B1%MLR_CONTRIBUTION
+    TOTAL_MLR = TOTAL_MLR + B1%MLR_CONTRIBUTION
+ENDDO
+
+END SUBROUTINE TRANSFER_MLR_TO_FIRE
+
+
+!> \brief Transfer MLR from VENTs to FIRE mesh cells for MLR-based HRR calculation
+!> \param NM Mesh number
+!> \param T Current time
+!> \param DT Current time step
+!> \details This subroutine accumulates MLR contributions from all VENTs into
+!> MESHES(NM)%VENT_MLR_SUM array, which is then added to WALL_MLR_SUM in COMBUSTION_MODEL
+
+SUBROUTINE TRANSFER_MLR_FROM_VENTS(NM,T,DT)
+USE MESH_POINTERS
+USE MESH_VARIABLES, ONLY: MESHES
+USE GLOBAL_CONSTANTS, ONLY: N_REACTIONS, TWO_EPSILON_EB
+USE TYPES, ONLY: SURFACE, RAMPS, REACTION
+USE MATH_FUNCTIONS, ONLY: EVALUATE_RAMP
+INTEGER, INTENT(IN) :: NM
+REAL(EB), INTENT(IN) :: T, DT
+INTEGER :: IV, I, J, K, IOR, I1, I2, J1, J2, K1, K2, I_GAS, J_GAS, K_GAS
+TYPE(VENTS_TYPE), POINTER :: VT
+TYPE(SURFACE_TYPE), POINTER :: SF
+TYPE(RAMPS_TYPE), POINTER :: RP
+REAL(EB) :: HRR_TOTAL, MLR_VENT, HRRPUA, VENT_AREA, MLR_SUM
+LOGICAL, SAVE :: DEBUG_DONE = .FALSE.
+
+! Initialize VENT_MLR_SUM to zero
+IF (ALLOCATED(MESHES(NM)%VENT_MLR_SUM)) THEN
+    MESHES(NM)%VENT_MLR_SUM = 0._EB
+ELSE
+    RETURN
+ENDIF
+
+MLR_SUM = 0._EB
+
+! Loop through all VENTs on this mesh and collect MLR from those with HRRPUA
+DO IV = 1, MESHES(NM)%N_VENT
+    VT => MESHES(NM)%VENTS(IV)
+    
+    ! Skip if not activated or no surface
+    IF (.NOT. VT%ACTIVATED) CYCLE
+    IF (VT%SURF_INDEX <= 0) CYCLE
+    
+    SF => SURFACE(VT%SURF_INDEX)
+    
+    ! Get HRRPUA from surface (may be ramped via TIME_HEAT)
+    HRRPUA = SF%HRRPUA
+    
+    ! Apply ramp if specified (TIME_HEAT ramp for HRRPUA)
+    IF (SF%N_QDOTPP_REF > 0) THEN
+        ! Complex ramping for cone calorimeter data - use integrated HRRPUA
+        HRRPUA = SF%HRRPUA
+    ELSEIF (SF%RAMP(1)%INDEX > 0) THEN
+        ! Simple ramp for TIME_HEAT
+        RP => RAMPS(SF%RAMP(1)%INDEX)
+        HRRPUA = HRRPUA * EVALUATE_RAMP(T, SF%RAMP(1)%INDEX)
+    ENDIF
+    
+    ! Skip if no HRR
+    IF (HRRPUA <= 0._EB) CYCLE
+    
+    ! Get VENT bounds
+    I1 = MIN(VT%I1, VT%I2)
+    I2 = MAX(VT%I1, VT%I2)
+    J1 = MIN(VT%J1, VT%J2)
+    J2 = MAX(VT%J1, VT%J2)
+    K1 = MIN(VT%K1, VT%K2)
+    K2 = MAX(VT%K1, VT%K2)
+    IOR = VT%IOR
+    
+    ! Calculate area per cell based on orientation
+    SELECT CASE(IOR)
+        CASE( 1, -1); VENT_AREA = DY(J1) * DZ(K1)  ! X-facing
+        CASE( 2, -2); VENT_AREA = DX(I1) * DZ(K1)  ! Y-facing
+        CASE( 3, -3); VENT_AREA = DX(I1) * DY(J1)  ! Z-facing
+        CASE DEFAULT; CYCLE
+    END SELECT
+    
+    ! Loop through all VENT cells and add MLR to gas cell in front
+    DO K = K1, K2
+        DO J = J1, J2
+            DO I = I1, I2
+                ! Calculate HRR for this cell
+                HRR_TOTAL = HRRPUA * VENT_AREA
+                
+                ! Calculate MLR from HRR / H_c
+                IF (N_REACTIONS > 0 .AND. REACTION(1)%HEAT_OF_COMBUSTION > TWO_EPSILON_EB) THEN
+                    MLR_VENT = HRR_TOTAL / REACTION(1)%HEAT_OF_COMBUSTION
+                ELSE
+                    MLR_VENT = 0._EB
+                ENDIF
+                
+                ! Get gas cell coordinates in front of vent
+                SELECT CASE(IOR)
+                    CASE( 1); I_GAS = I + 1  ! +X direction
+                    CASE(-1); I_GAS = I - 1  ! -X direction
+                    CASE( 2); J_GAS = J + 1  ! +Y direction
+                    CASE(-2); J_GAS = J - 1  ! -Y direction
+                    CASE( 3); K_GAS = K + 1  ! +Z direction
+                    CASE(-3); K_GAS = K - 1  ! -Z direction
+                    CASE DEFAULT; CYCLE
+                END SELECT
+                
+                ! Bounds check
+                IF (I_GAS < 0 .OR. I_GAS > IBP1 .OR. J_GAS < 0 .OR. J_GAS > JBP1 .OR. K_GAS < 0 .OR. K_GAS > KBP1) CYCLE
+                
+                ! Add MLR to this cell
+                MESHES(NM)%VENT_MLR_SUM(I_GAS,J_GAS,K_GAS) = MESHES(NM)%VENT_MLR_SUM(I_GAS,J_GAS,K_GAS) + MLR_VENT
+                MLR_SUM = MLR_SUM + MLR_VENT
+            ENDDO
+        ENDDO
+    ENDDO
+ENDDO
+
+! Debug output - first time only
+IF (.NOT. DEBUG_DONE .AND. MLR_SUM > 0._EB) THEN
+    DEBUG_DONE = .TRUE.
+    WRITE(0,*) '[VENT_MLR] Total MLR from VENTs at T=', T, ': ', MLR_SUM, ' kg/s'
+    WRITE(0,*) '[VENT_MLR] Max VENT_MLR_SUM = ', MAXVAL(MESHES(NM)%VENT_MLR_SUM)
+ENDIF
+
+END SUBROUTINE TRANSFER_MLR_FROM_VENTS
 
 !> \brief call cvode_interface after converting mass fraction to molar concentration.
 !> \param ZZ species mass fraction array
@@ -1483,17 +1879,26 @@ END SUBROUTINE EXTINCT_2
 
 
 SUBROUTINE FIRE_FORWARD_EULER(ZZ_OUT,ZZ_IN,ZZ_0,ZETA_OUT,ZETA_IN,DT_LOC,TMP_IN,RHO_HAT,CELL_MASS,TAU_MIX,&
-                              Q_REAC_LOC,TOTAL_MIXED_MASS,NO_REACTIONS)
+                              Q_REAC_LOC,TOTAL_MIXED_MASS,NO_REACTIONS,VEL_RMS_IN,PBAR_0_IN,DELTA_IN)
 USE PHYSICAL_FUNCTIONS, ONLY: GET_REALIZABLE_MF,GET_AVERAGE_SPECIFIC_HEAT
 REAL(EB), INTENT(IN) :: ZZ_0(1:N_TRACKED_SPECIES),ZZ_IN(1:N_TRACKED_SPECIES),ZETA_IN,DT_LOC,RHO_HAT,CELL_MASS,TAU_MIX
+REAL(EB), INTENT(IN), OPTIONAL :: VEL_RMS_IN, PBAR_0_IN, DELTA_IN
 REAL(EB), INTENT(OUT) :: ZZ_OUT(1:N_TRACKED_SPECIES),ZETA_OUT,Q_REAC_LOC(1:N_REACTIONS),TOTAL_MIXED_MASS
 REAL(EB), INTENT(INOUT) :: TMP_IN
 LOGICAL , INTENT(OUT) :: NO_REACTIONS
 REAL(EB) :: ZZ_HAT(1:N_TRACKED_SPECIES),DZZ(1:N_TRACKED_SPECIES),&
             MIXED_MASS(1:N_TRACKED_SPECIES),MIXED_MASS_0(1:N_TRACKED_SPECIES),&
-            Q_REAC_OUT(1:N_REACTIONS),TOTAL_MIXED_MASS_0
+            Q_REAC_OUT(1:N_REACTIONS),TOTAL_MIXED_MASS_0,VEL_RMS,PBAR_LOC,DELTA_LOC
 INTEGER, PARAMETER :: INFINITELY_FAST=1,FINITE_RATE=2
 INTEGER :: PTY
+
+! Extract optional parameters for FDS5 flame speed model
+VEL_RMS = 0._EB
+PBAR_LOC = 101325._EB
+DELTA_LOC = 0.1_EB
+IF (PRESENT(VEL_RMS_IN)) VEL_RMS = VEL_RMS_IN
+IF (PRESENT(PBAR_0_IN)) PBAR_LOC = PBAR_0_IN
+IF (PRESENT(DELTA_IN)) DELTA_LOC = DELTA_IN
 
 ! Determine initial state of mixed reactor zone
 TOTAL_MIXED_MASS_0  = (1._EB-ZETA_IN)*CELL_MASS
@@ -1515,7 +1920,8 @@ CALL GET_REALIZABLE_MF(ZZ_HAT)
 Q_REAC_LOC(:) = 0._EB
 IF (ANY(REACTION%FAST_CHEMISTRY)) THEN
    DO PTY = 1,MAX_PRIORITY
-      CALL REACTION_RATE(DZZ,ZZ_HAT,DT_LOC,RHO_HAT,TMP_IN,INFINITELY_FAST,Q_REAC_OUT,NO_REACTIONS,PRIORITY=PTY)
+      CALL REACTION_RATE(DZZ,ZZ_HAT,DT_LOC,RHO_HAT,TMP_IN,INFINITELY_FAST,Q_REAC_OUT,NO_REACTIONS,PRIORITY=PTY,&
+                         VEL_RMS_IN=VEL_RMS_IN,PBAR_0_IN=PBAR_0_IN,DELTA_IN=DELTA_IN)
       ZZ_HAT = ZZ_HAT + DZZ
       Q_REAC_LOC = Q_REAC_LOC + Q_REAC_OUT*TOTAL_MIXED_MASS
    ENDDO
@@ -1539,12 +1945,13 @@ END SUBROUTINE FIRE_FORWARD_EULER
 
 
 SUBROUTINE FIRE_RK2(ZZ_OUT,ZZ_IN,ZZ_0,ZETA_OUT,ZETA_IN,DT_SUB,N_INC,TMP_IN,RHO_HAT,CELL_MASS,TAU_MIX,&
-                    Q_REAC_OUT,TOTAL_MIXED_MASS_OUT,NO_REACTIONS)
+                    Q_REAC_OUT,TOTAL_MIXED_MASS_OUT,NO_REACTIONS,VEL_RMS_IN,PBAR_0_IN,DELTA_IN)
 
 ! This function uses RK2 to integrate ZZ_O from t=0 to t=DT_SUB in increments of DT_LOC=DT_SUB/N_INC
 
 REAL(EB), INTENT(IN) :: ZZ_0(1:N_TRACKED_SPECIES),ZZ_IN(1:N_TRACKED_SPECIES),DT_SUB,ZETA_IN,RHO_HAT,CELL_MASS,&
                         TAU_MIX
+REAL(EB), INTENT(IN), OPTIONAL :: VEL_RMS_IN,PBAR_0_IN,DELTA_IN
 REAL(EB), INTENT(OUT) :: ZZ_OUT(1:N_TRACKED_SPECIES),ZETA_OUT,Q_REAC_OUT(1:N_REACTIONS),TOTAL_MIXED_MASS_OUT
 INTEGER, INTENT(IN) :: N_INC
 LOGICAL, INTENT(OUT) :: NO_REACTIONS
@@ -1561,10 +1968,10 @@ TOTAL_MIXED_MASS_0 = (1._EB-ZETA_TMP_0)*CELL_MASS
 
 DO N=1,N_INC
    CALL FIRE_FORWARD_EULER(ZZ_TMP_1,ZZ_TMP_0,ZZ_0,ZETA_TMP_1,ZETA_TMP_0,DT_LOC,TMP_IN,RHO_HAT,CELL_MASS,TAU_MIX,&
-                           Q_REAC_1,TOTAL_MIXED_MASS_1,NO_REACTIONS)
+                           Q_REAC_1,TOTAL_MIXED_MASS_1,NO_REACTIONS,VEL_RMS_IN,PBAR_0_IN,DELTA_IN)
 
    CALL FIRE_FORWARD_EULER(ZZ_TMP_2,ZZ_TMP_1,ZZ_0,ZETA_TMP_2,ZETA_TMP_1,DT_LOC,TMP_IN,RHO_HAT,CELL_MASS,TAU_MIX,&
-                           Q_REAC_2,TOTAL_MIXED_MASS_2,NO_REACTIONS)
+                           Q_REAC_2,TOTAL_MIXED_MASS_2,NO_REACTIONS,VEL_RMS_IN,PBAR_0_IN,DELTA_IN)
 
    IF (TOTAL_MIXED_MASS_2>TWO_EPSILON_EB) THEN
       ZZ_OUT = 0.5_EB*(ZZ_TMP_0*TOTAL_MIXED_MASS_0 + ZZ_TMP_2*TOTAL_MIXED_MASS_2)
@@ -1588,7 +1995,7 @@ ENDDO
 END SUBROUTINE FIRE_RK2
 
 
-SUBROUTINE REACTION_RATE(DZZ,ZZ_OLD,DT_SUB,RHO_0,TMP_0,KINETICS,Q_REAC_OUT,NO_REACTIONS,PRIORITY)
+SUBROUTINE REACTION_RATE(DZZ,ZZ_OLD,DT_SUB,RHO_0,TMP_0,KINETICS,Q_REAC_OUT,NO_REACTIONS,PRIORITY,VEL_RMS_IN,PBAR_0_IN,DELTA_IN)
 
 USE PHYSICAL_FUNCTIONS, ONLY : GET_MASS_FRACTION_ALL,GET_SPECIFIC_GAS_CONSTANT,GET_MOLECULAR_WEIGHT
 REAL(EB), INTENT(OUT) :: DZZ(1:N_TRACKED_SPECIES),Q_REAC_OUT(1:N_REACTIONS)
@@ -1596,9 +2003,10 @@ REAL(EB), INTENT(IN) :: ZZ_OLD(1:N_TRACKED_SPECIES),DT_SUB,RHO_0,TMP_0
 LOGICAL, INTENT(OUT) :: NO_REACTIONS
 INTEGER, INTENT(IN) :: KINETICS
 INTEGER, INTENT(IN), OPTIONAL :: PRIORITY
+REAL(EB), INTENT(IN), OPTIONAL :: VEL_RMS_IN,PBAR_0_IN,DELTA_IN
 REAL(EB) :: DZ_F,YY_PRIMITIVE(1:N_SPECIES),MW,DT_TMP(1:N_TRACKED_SPECIES),DT_MIN,DT_LOC,&
             ZZ_TMP(1:N_TRACKED_SPECIES),ZZ_NEW(1:N_TRACKED_SPECIES),Q_REAC_TMP(1:N_REACTIONS),AA,X_Y(1:N_SPECIES),X_Y_SUM,&
-            K_INF,K_0,P_RI,FCENT,C_I
+            K_INF,K_0,P_RI,FCENT,C_I,DZ_F_LOCAL(1:N_REACTIONS),BOUNDEDNESS_CORRECTION,VEL_RMS,PBAR_LOC,DELTA_LOC
 INTEGER :: I,NS,OUTER_IT
 LOGICAL :: REACTANTS_PRESENT
 INTEGER, PARAMETER :: INFINITELY_FAST=1,FINITE_RATE=2
@@ -1613,37 +2021,70 @@ KINETICS_SELECT: SELECT CASE(KINETICS)
 
    CASE(INFINITELY_FAST)
 
-      NO_REACTIONS = .FALSE.
-      FAST_REAC_LOOP: DO OUTER_IT=1,N_REACTIONS
-         ZZ_TMP = ZZ_NEW
+      ! Extract optional parameters
+      VEL_RMS = 0._EB
+      PBAR_LOC = 101325._EB
+      DELTA_LOC = 0.1_EB
+      IF (PRESENT(VEL_RMS_IN)) VEL_RMS = VEL_RMS_IN
+      IF (PRESENT(PBAR_0_IN)) PBAR_LOC = PBAR_0_IN
+      IF (PRESENT(DELTA_IN)) DELTA_LOC = DELTA_IN
+
+      ! FDS5-style flame speed model: use FLAME_SPEED_FACTOR + FUNC_BCOR
+      FDS5_FAST_IF: IF (FDS5_FLAME_SPEED_MODEL) THEN
+         NO_REACTIONS = .FALSE.
          DZZ = 0._EB
-         REACTANTS_PRESENT = .FALSE.
-         REACTION_LOOP_1: DO I=1,N_REACTIONS
+         Q_REAC_TMP = 0._EB
+         REACTION_LOOP_FDS5: DO I=1,N_REACTIONS
             RN => REACTION(I)
-            IF (.NOT.RN%FAST_CHEMISTRY .OR. RN%PRIORITY/=PRIORITY) CYCLE REACTION_LOOP_1
-            IF (RN%AIR_SMIX_INDEX > -1) THEN
-               DZ_F = ZZ_TMP(RN%FUEL_SMIX_INDEX)*ZZ_TMP(RN%AIR_SMIX_INDEX) ! 2nd-order reaction
-            ELSE
-               DZ_F = ZZ_TMP(RN%FUEL_SMIX_INDEX) ! 1st-order
+            IF (.NOT.RN%FAST_CHEMISTRY) CYCLE REACTION_LOOP_FDS5
+            IF (PRESENT(PRIORITY)) THEN
+               IF (RN%PRIORITY/=PRIORITY) CYCLE REACTION_LOOP_FDS5
             ENDIF
-            IF (DZ_F > TWO_EPSILON_EB) REACTANTS_PRESENT = .TRUE.
-            AA = RN%A_PRIME * RHO_0**RN%RHO_EXPONENT
-            DZZ = DZZ + AA * RN%NU_MW_O_MW_F * DZ_F
-            Q_REAC_TMP(I) = RN%HEAT_OF_COMBUSTION * AA * DZ_F
-         ENDDO REACTION_LOOP_1
-         IF (REACTANTS_PRESENT) THEN
-            DT_TMP = HUGE_EB
-            DO NS = 1,N_TRACKED_SPECIES
-               IF (DZZ(NS) < 0._EB) DT_TMP(NS) = -ZZ_TMP(NS)/DZZ(NS)
-            ENDDO
-            DT_MIN = MINVAL(DT_TMP)
-            ZZ_NEW = ZZ_TMP + DZZ*DT_MIN
-            Q_REAC_OUT = Q_REAC_OUT + Q_REAC_TMP*DT_MIN
-         ELSE
-            EXIT FAST_REAC_LOOP
-         ENDIF
-      ENDDO FAST_REAC_LOOP
-      DZZ = ZZ_NEW - ZZ_OLD
+            DZ_F_LOCAL(I) = FLAME_SPEED_FACTOR(ZZ_OLD,DT_SUB,RHO_0,TMP_0,PBAR_LOC,I,DELTA_LOC,VEL_RMS)
+            DZZ = DZZ + RN%NU_MW_O_MW_F * ZZ_OLD(RN%FUEL_SMIX_INDEX) * DZ_F_LOCAL(I)
+            Q_REAC_TMP(I) = RN%HEAT_OF_COMBUSTION * ZZ_OLD(RN%FUEL_SMIX_INDEX) * DZ_F_LOCAL(I)
+         ENDDO REACTION_LOOP_FDS5
+         ! Apply boundedness correction (FDS5 FUNC_BCOR approach)
+         ZZ_TMP = ZZ_OLD + DZZ
+         BOUNDEDNESS_CORRECTION = FUNC_BCOR(ZZ_OLD,ZZ_TMP)
+         ZZ_NEW = ZZ_OLD + DZZ*BOUNDEDNESS_CORRECTION
+         Q_REAC_OUT = Q_REAC_TMP*BOUNDEDNESS_CORRECTION
+         DZZ = ZZ_NEW - ZZ_OLD
+         IF (BOUNDEDNESS_CORRECTION < TWO_EPSILON_EB) NO_REACTIONS = .TRUE.
+      ELSE FDS5_FAST_IF
+         ! Original FDS6 iterative approach with DT_MIN limiting
+         NO_REACTIONS = .FALSE.
+         FAST_REAC_LOOP: DO OUTER_IT=1,N_REACTIONS
+            ZZ_TMP = ZZ_NEW
+            DZZ = 0._EB
+            REACTANTS_PRESENT = .FALSE.
+            REACTION_LOOP_1: DO I=1,N_REACTIONS
+               RN => REACTION(I)
+               IF (.NOT.RN%FAST_CHEMISTRY .OR. RN%PRIORITY/=PRIORITY) CYCLE REACTION_LOOP_1
+               IF (RN%AIR_SMIX_INDEX > -1) THEN
+                  DZ_F = ZZ_TMP(RN%FUEL_SMIX_INDEX)*ZZ_TMP(RN%AIR_SMIX_INDEX) ! 2nd-order reaction
+               ELSE
+                  DZ_F = ZZ_TMP(RN%FUEL_SMIX_INDEX) ! 1st-order
+               ENDIF
+               IF (DZ_F > TWO_EPSILON_EB) REACTANTS_PRESENT = .TRUE.
+               AA = RN%A_PRIME * RHO_0**RN%RHO_EXPONENT
+               DZZ = DZZ + AA * RN%NU_MW_O_MW_F * DZ_F
+               Q_REAC_TMP(I) = RN%HEAT_OF_COMBUSTION * AA * DZ_F
+            ENDDO REACTION_LOOP_1
+            IF (REACTANTS_PRESENT) THEN
+               DT_TMP = HUGE_EB
+               DO NS = 1,N_TRACKED_SPECIES
+                  IF (DZZ(NS) < 0._EB) DT_TMP(NS) = -ZZ_TMP(NS)/DZZ(NS)
+               ENDDO
+               DT_MIN = MINVAL(DT_TMP)
+               ZZ_NEW = ZZ_TMP + DZZ*DT_MIN
+               Q_REAC_OUT = Q_REAC_OUT + Q_REAC_TMP*DT_MIN
+            ELSE
+               EXIT FAST_REAC_LOOP
+            ENDIF
+         ENDDO FAST_REAC_LOOP
+         DZZ = ZZ_NEW - ZZ_OLD
+      ENDIF FDS5_FAST_IF
 
    CASE(FINITE_RATE)
 
@@ -1745,6 +2186,112 @@ KINETICS_SELECT: SELECT CASE(KINETICS)
 END SELECT KINETICS_SELECT
 
 END SUBROUTINE REACTION_RATE
+
+
+!===============================================================
+! FDS5-style flame speed functions (restored from FDS 5.5.3)
+! Used when FDS5_FLAME_SPEED_MODEL=.TRUE. for INFINITELY_FAST chemistry
+!===============================================================
+
+
+!> \brief Boundedness correction factor for reaction rates (FDS5 approach)
+!> Finds a correction such that all species mass fractions remain in [0,1]
+
+REAL(EB) FUNCTION FUNC_BCOR(ZZ_0,ZZ_NEW)
+REAL(EB), INTENT(IN) :: ZZ_0(1:N_TRACKED_SPECIES),ZZ_NEW(1:N_TRACKED_SPECIES)
+REAL(EB) :: BCOR,DZ_IB,DZ_OB
+INTEGER :: NS
+
+BCOR = 1._EB
+DO NS=1,N_TRACKED_SPECIES
+   IF (ZZ_NEW(NS)<0._EB) THEN
+      DZ_IB=ZZ_0(NS)
+      DZ_OB=ABS(ZZ_NEW(NS))
+      BCOR = MIN( BCOR, DZ_IB/MAX(DZ_IB+DZ_OB,TWO_EPSILON_EB) )
+   ENDIF
+   IF (ZZ_NEW(NS)>1._EB) THEN
+      DZ_IB=1._EB-ZZ_0(NS)
+      DZ_OB=ZZ_NEW(NS)-1._EB
+      BCOR = MIN( BCOR, DZ_IB/MAX(DZ_IB+DZ_OB,TWO_EPSILON_EB) )
+   ENDIF
+ENDDO
+FUNC_BCOR = BCOR
+
+END FUNCTION FUNC_BCOR
+
+
+!> \brief Laminar flame speed as function of temperature and equivalence ratio
+!> Uses ramp-based formula: S_L = S_L0 * (T/T_ref)^n * RAMP(phi)
+
+REAL(EB) FUNCTION LAMINAR_FLAME_SPEED(TMP,EQ,NR)
+USE MATH_FUNCTIONS, ONLY: EVALUATE_RAMP
+REAL(EB), INTENT(IN) :: TMP,EQ
+INTEGER, INTENT(IN) :: NR
+TYPE(REACTION_TYPE),POINTER :: RN=>NULL()
+
+RN=>REACTION(NR)
+
+! Table-based flame speed lookup (not implemented in FDS6 yet; fall through to ramp)
+! IF (RN%TABLE_FS_INDEX>0) THEN
+!    CALL INTERPOLATE2D(RN%TABLE_FS_INDEX,EQ,TMP,LAMINAR_FLAME_SPEED)
+!    RETURN
+! ENDIF
+
+LAMINAR_FLAME_SPEED = RN%FLAME_SPEED*(TMP/RN%FLAME_SPEED_TEMPERATURE)**RN%FLAME_SPEED_EXPONENT &
+                      *EVALUATE_RAMP(EQ,RN%RAMP_FS_INDEX,0._EB)
+
+END FUNCTION LAMINAR_FLAME_SPEED
+
+
+!> \brief Flame speed factor for INFINITELY_FAST chemistry (FDS5 approach)
+!> Computes the fraction of fuel consumed per timestep based on turbulent flame speed
+!> Factor = RHO_B/RHO_0 * S_T * DT/DELTA
+!> where S_T = S_L * (1 + alpha * (u'/S_L)^beta)
+
+REAL(EB) FUNCTION FLAME_SPEED_FACTOR(ZZ_0,DT_LOC,RHO_0,TMP_0,PBAR_0,NR,DELTA,VEL_RMS)
+USE PHYSICAL_FUNCTIONS, ONLY : GET_AVERAGE_SPECIFIC_HEAT,GET_SPECIFIC_GAS_CONSTANT
+REAL(EB), INTENT(IN) :: ZZ_0(1:N_TRACKED_SPECIES),RHO_0,TMP_0,PBAR_0,DT_LOC,DELTA,VEL_RMS
+INTEGER, INTENT(IN) :: NR
+TYPE(REACTION_TYPE),POINTER :: RN=>NULL()
+REAL(EB) :: DZ_F,ZZ_B(1:N_TRACKED_SPECIES),TMP_B,CPBAR_B,RHO_B,CPBAR_0,RSUM_B,PHI,S_L,S_T
+INTEGER :: IT
+
+FLAME_SPEED_FACTOR = 1._EB
+
+RN=>REACTION(NR)
+IF (RN%FLAME_SPEED<0._EB) RETURN
+
+! Equivalence ratio of unburnt mixture
+PHI = RN%S*ZZ_0(RN%FUEL_SMIX_INDEX)/ZZ_0(RN%AIR_SMIX_INDEX)
+
+! Burnt composition
+DZ_F = MIN(ZZ_0(RN%FUEL_SMIX_INDEX),ZZ_0(RN%AIR_SMIX_INDEX)/RN%S)
+ZZ_B = ZZ_0 + RN%NU_MW_O_MW_F*DZ_F
+ZZ_B = MIN(1._EB,MAX(0._EB,ZZ_B))
+
+! Find burnt zone temperature (2 iterations)
+CALL GET_AVERAGE_SPECIFIC_HEAT(ZZ_0,CPBAR_0,TMP_0)
+TMP_B = TMP_0
+DO IT=1,2
+   CALL GET_AVERAGE_SPECIFIC_HEAT(ZZ_B,CPBAR_B,TMP_B)
+   TMP_B = ( CPBAR_0*TMP_0 + (1._EB-RN%CHI_R)*DZ_F*RN%HEAT_OF_COMBUSTION ) / CPBAR_B
+ENDDO
+
+! Compute burnt zone density
+CALL GET_SPECIFIC_GAS_CONSTANT(ZZ_B,RSUM_B)
+RHO_B = PBAR_0/(RSUM_B*TMP_B)
+
+! Get turbulent flame speed
+S_L = LAMINAR_FLAME_SPEED(TMP_0,PHI,NR)
+
+IF (S_L<TWO_EPSILON_EB) THEN
+   FLAME_SPEED_FACTOR = 0._EB
+ELSE
+   S_T = MAX( S_L, S_L*( 1._EB + RN%TURBULENT_FLAME_SPEED_ALPHA*(VEL_RMS/S_L)**RN%TURBULENT_FLAME_SPEED_EXPONENT ) )
+   FLAME_SPEED_FACTOR = RHO_B/RHO_0 * S_T * DT_LOC/DELTA
+ENDIF
+
+END FUNCTION FLAME_SPEED_FACTOR
 
 
 !> \brief Compute adiabatic flame tmperature for reaction mixture
@@ -1961,7 +2508,7 @@ SPEC_LOOP: DO NS = 1, N_TRACKED_SPECIES
    DO K = 1, KBAR
       DO J = 1, JBAR
          ILOOP: DO I = 1, IBAR
-            IF (CELL(CELL_INDEX(I,J,K))%SOLID) CYCLE ILOOP
+            IF (SOLID_CELL(I,J,K)) CYCLE ILOOP
             IF (CC_IBM) THEN
                IF (CCVAR(I,J,K,CC_CGSC) /= CC_GASPHASE) CYCLE ILOOP
             ENDIF

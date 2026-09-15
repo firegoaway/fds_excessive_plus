@@ -115,3 +115,22 @@ Build/cmakeb/
 # Ignore everything under such directories
 *UNTRACKED*/**
 
+# fds_excessive_plus: локальные рабочие каталоги и резервные копии (не публикуются)
+Source/.kilo/
+Source/.openclaude/
+Source/.qwen/
+Source/memory/
+Source/test/
+Source/smv/
+Source/compatibility_test/
+Source/fds5/Deprecated_Files/
+Source/fds5/*.backup_soot_patch
+Build/impi_intel_win/probe*.f90
+CMakeLists_original.txt
+
+# fds_excessive_plus: унаследованные каталоги апстрима (исключены из публикации)
+Manuals/
+Verification/
+Validation/
+Utilities/
+

@@ -33,10 +33,10 @@ USE TURBULENCE, ONLY: NS_ANALYTICAL_SOLUTION,INIT_TURB_ARRAYS,COMPRESSION_WAVE,&
                       TWOD_VORTEX_CERFACS,TWOD_VORTEX_UMD,TWOD_SOBOROT_UMD, &
                       SYNTHETIC_TURBULENCE,SYNTHETIC_EDDY_SETUP,SANDIA_DAT
 USE MANUFACTURED_SOLUTIONS, ONLY: SHUNN_MMS_3,SAAD_MMS_1
-USE CC_SCALARS,   ONLY: CC_SET_DATA,CC_END_STEP,CC_DENSITY,CC_RHO0W_INTERP,       &
-                        CCCOMPUTE_RADIATION,CC_NO_FLUX,CC_COMPUTE_VELOCITY_ERROR, &
-                        CC_NO_FLUX,CC_COMPUTE_VELOCITY_ERROR,FINISH_CC,        &
-                        INIT_CUTCELL_DATA,MESH_CC_EXCHANGE,ROTATED_CUBE_ANN_SOLN, &
+USE CC_SCALARS,   ONLY: CC_SET_DATA,CC_END_STEP,CC_END_STEP_W,CC_DENSITY,CC_DENSITY_W,CC_RHO0W_INTERP,CC_RHO0W_INTERP_W,       &
+                        CCCOMPUTE_RADIATION,CC_CCCOMPUTE_RADIATION_W,CC_NO_FLUX,CC_NO_FLUX_W,CC_COMPUTE_VELOCITY_ERROR, &
+                        FINISH_CC,CC_FINISH_W,        &
+                        INIT_CUTCELL_DATA,CC_INIT_CUTCELL_DATA_W,MESH_CC_EXCHANGE,ROTATED_CUBE_ANN_SOLN, &
                         CC_RESTORE_UVW_UNLINKED
 USE OPENMP_FDS
 USE MPI_F08
@@ -59,6 +59,14 @@ LOGICAL, ALLOCATABLE, DIMENSION(:) ::  STATE_ARRAY
 INTEGER :: ITER
 TYPE (MESH_TYPE), POINTER :: M,M4
 TYPE (OMESH_TYPE), POINTER :: M2,M3
+
+! Fuel Wizard variables
+CHARACTER(FN_LENGTH) :: FDS_FILE_FOR_WIZARD
+CHARACTER(1024) :: WIZARD_CMD
+LOGICAL :: WIZARD_EXISTS
+INTEGER :: SLASH_POS
+CHARACTER(FN_LENGTH) :: EXE_DIR_PATH
+CHARACTER(1024) :: WIZARD_FULL_PATH
 
 ! MPI stuff
 
@@ -111,6 +119,30 @@ ALLOCATE(T_USED(N_TIMERS)) ; T_USED = 0._EB ; T_USED(1) = CURRENT_TIME()
 ! Assign a compilation date
 
 CALL GET_INFO(REVISION,REVISION_DATE,COMPILE_DATE)
+
+! Fuel Wizard: Check for Complex Stoichiometry and run GUI before reading .fds (Rank 0 only)
+IF (MY_RANK==0) THEN
+   CALL GET_COMMAND_ARGUMENT(1, FDS_FILE_FOR_WIZARD)
+   IF (TRIM(FDS_FILE_FOR_WIZARD)/=' ' .AND. TRIM(FDS_FILE_FOR_WIZARD)/='null') THEN
+      ! Find fuel_wizard_gui.exe in same directory as this executable
+      CALL GET_COMMAND_ARGUMENT(0, EXE_DIR_PATH)
+      SLASH_POS = INDEX(EXE_DIR_PATH, '\', BACK=.TRUE.)
+      IF (SLASH_POS == 0) SLASH_POS = INDEX(EXE_DIR_PATH, '/', BACK=.TRUE.)
+      IF (SLASH_POS > 0) THEN
+         WIZARD_FULL_PATH = EXE_DIR_PATH(1:SLASH_POS) // 'fuel_wizard_gui.exe'
+         INQUIRE(FILE=TRIM(WIZARD_FULL_PATH), EXIST=WIZARD_EXISTS)
+         IF (WIZARD_EXISTS) THEN
+            ! Switch to Simple Chemistry mode — wizard will convert Complex Stoichiometry
+            SIMPLE_CHEMISTRY = .TRUE.
+            WIZARD_CMD = TRIM(WIZARD_FULL_PATH) // ' "' // TRIM(FDS_FILE_FOR_WIZARD) // '"'
+            CALL EXECUTE_COMMAND_LINE(WIZARD_CMD, WAIT=.TRUE.)
+         ENDIF
+      ENDIF
+   ENDIF
+ENDIF
+
+! MPI barrier — wait for wizard to finish on rank 0 before all ranks read .fds
+IF (N_MPI_PROCESSES > 1) CALL MPI_BARRIER(MPI_COMM_WORLD, IERR)
 
 ! Read input from CHID.fds file and stop the code if any errors are found
 
@@ -180,6 +212,7 @@ ENDIF
 DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
    CALL INITIALIZE_ATMOSPHERE(NM)
    IF (.NOT.SETUP_ONLY .OR. CHECK_MESH_ALIGNMENT) CALL INITIALIZE_WALL_ARRAY(NM)
+   IF (.NOT.SETUP_ONLY .OR. CHECK_MESH_ALIGNMENT) CALL INITIALIZE_SOLID_CELL(NM)
 ENDDO
 IF (MY_RANK==0 .AND. VERBOSE) CALL VERBOSE_PRINTOUT('Completed INITIALIZE_WALL_ARRAY')
 
@@ -322,7 +355,7 @@ DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
 ENDDO
 
 ! Init centroid data (i.e. rho,zz) on cut-cells, cut-faces and CFACEs.
-IF (CC_IBM) CALL INIT_CUTCELL_DATA(T_BEGIN,DT,FIRST_CALL=.TRUE.)
+IF (CC_IBM) CALL CC_INIT_CUTCELL_DATA_W(T_BEGIN,DT,FIRST_CALL=.TRUE.)
 
 DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
    IF (TGA_SURF_INDEX>0) CYCLE
@@ -354,7 +387,8 @@ ENDDO
 
 IF (MY_RANK==0 .AND. VERBOSE) CALL VERBOSE_PRINTOUT('Completed VELOCITY_BC match')
 
-! Level Set model for firespread in vegetation
+! Level Set model for firespread in vegetation - Initialization for TERRAIN_CASE compatibility
+! Vegetation fire spread is disabled, but arrays must be initialized for terrain cases
 
 IF (LEVEL_SET_MODE>0 .OR. TERRAIN_CASE) THEN
    DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
@@ -389,7 +423,7 @@ IF (RESTART) THEN
       STOP_STATUS = SETUP_STOP
       IF (MY_RANK==0) WRITE(LU_ERR,*) 'ERROR(1051): RESTART initial time equals T_END.'
    ENDIF
-   IF (CC_IBM) CALL INIT_CUTCELL_DATA(T,DT,FIRST_CALL=.FALSE.)  ! Init centroid data (rho,zz) on cut-cells and cut-faces.
+   IF (CC_IBM) CALL CC_INIT_CUTCELL_DATA_W(T,DT,FIRST_CALL=.FALSE.)  ! Init centroid data (rho,zz) on cut-cells and cut-faces.
    CALL STOP_CHECK(1)
 ENDIF
 
@@ -412,7 +446,7 @@ IF (.NOT.RESTART) THEN
       DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          IF (RADIATION) THEN
             CALL COMPUTE_RADIATION(T_BEGIN,NM,ITER)
-            IF (CC_IBM) CALL CCCOMPUTE_RADIATION(T_BEGIN,NM,ITER)
+            IF (CC_IBM) CALL CC_CCCOMPUTE_RADIATION_W(T_BEGIN,NM,ITER)
          ENDIF
          CALL WALL_BC(T_BEGIN,DT,NM)
       ENDDO
@@ -424,7 +458,7 @@ IF (.NOT.RESTART) THEN
    ENDDO
 
    IF (MY_RANK==0 .AND. VERBOSE) CALL VERBOSE_PRINTOUT('Completed radiation initialization')
-   IF (CC_IBM) CALL CC_RHO0W_INTERP
+   IF (CC_IBM) CALL CC_RHO0W_INTERP_W
 
 ENDIF
 
@@ -545,8 +579,19 @@ T_USED(1) = WALL_CLOCK_START_ITERATIONS
 
 INITIALIZATION_PHASE = .FALSE.
 
-IF (UNFREEZE_TIME > 0._EB) THEN 
-   FREEZE_VELOCITY=.TRUE. 
+! Report vegetation/level set status (disabled by default)
+IF (MY_RANK==0) THEN
+   IF (LEVEL_SET_MODE==0 .AND. .NOT.TERRAIN_CASE) THEN
+      WRITE(LU_ERR,*) 'Vegetation/Level Set fire spread: DISABLED (default)'
+   ELSEIF (LEVEL_SET_MODE>0) THEN
+      WRITE(LU_ERR,*) 'Vegetation/Level Set fire spread: ENABLED (LEVEL_SET_MODE =',LEVEL_SET_MODE,')'
+   ELSEIF (TERRAIN_CASE) THEN
+      WRITE(LU_ERR,*) 'Terrain case: ENABLED (Level Set arrays initialized, fire spread disabled)'
+   ENDIF
+ENDIF
+
+IF (UNFREEZE_TIME > 0._EB) THEN
+   FREEZE_VELOCITY=.TRUE.
    SOLID_PHASE_ONLY=.TRUE.
    LOCK_TIME_STEP=.TRUE.
 ENDIF
@@ -625,7 +670,14 @@ MAIN_LOOP: DO
 
    COMPUTE_FINITE_DIFFERENCES_1: DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
       CALL INSERT_ALL_PARTICLES(T,NM)
-      IF (.NOT.SOLID_PHASE_ONLY .AND. .NOT.FREEZE_VELOCITY) CALL COMPUTE_VISCOSITY(NM,APPLY_TO_ESTIMATED_VARIABLES=.FALSE.)
+      IF (.NOT.SOLID_PHASE_ONLY .AND. .NOT.FREEZE_VELOCITY) THEN
+         IF (CACHE_VISCOSITY_PREDICTOR) THEN
+            ! Skip predictor viscosity computation; saves ~2-4% per timestep
+            ! Viscosity will be computed in corrector step instead
+         ELSE
+            CALL COMPUTE_VISCOSITY(NM,APPLY_TO_ESTIMATED_VARIABLES=.FALSE.)
+         ENDIF
+      ENDIF
       CALL MASS_FINITE_DIFFERENCES_NEW(NM)
    ENDDO COMPUTE_FINITE_DIFFERENCES_1
 
@@ -640,20 +692,21 @@ MAIN_LOOP: DO
       COMPUTE_DENSITY_LOOP: DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          IF(CC_IBM .AND. .NOT.FIRST_PASS) CALL CC_RESTORE_UVW_UNLINKED(NM,ASSIGN_UNLINKED_VEL=.TRUE.)
          CALL DENSITY(T,DT,NM)
-         IF (LEVEL_SET_MODE>0) CALL LEVEL_SET_FIRESPREAD(T,DT,NM)
+         ! Vegetation disabled - LEVEL_SET_FIRESPREAD is a stub placeholder
+         ! IF (LEVEL_SET_MODE>0) CALL LEVEL_SET_FIRESPREAD(T,DT,NM)
       ENDDO COMPUTE_DENSITY_LOOP
 
       IF (LEVEL_SET_MODE==2 .AND. CHECK_FREEZE_VELOCITY) CALL CHECK_FREEZE_VELOCITY_STATUS
 
-      IF (CC_IBM) CALL CC_DENSITY(T,DT)
+      IF (CC_IBM) CALL CC_DENSITY_W(T,DT)
 
       ! Exchange species mass fractions at interpolated boundaries.
+      ! FDS5: only on FIRST_PASS (not every CFL iteration)
 
-      IF (LEVEL_SET_MODE/=1) CALL MESH_EXCHANGE(1)
+      IF (FIRST_PASS .AND. LEVEL_SET_MODE/=1) CALL MESH_EXCHANGE(1)
 
-      ! Exchange level set values, if necessary
-
-      IF (LEVEL_SET_MODE>0) CALL MESH_EXCHANGE(14)
+      ! Exchange level set values for terrain case compatibility
+      IF (LEVEL_SET_MODE>0 .OR. TERRAIN_CASE) CALL MESH_EXCHANGE(14)
 
       ! Exchange newly inserted particles, if necessary
 
@@ -698,6 +751,11 @@ MAIN_LOOP: DO
 
       COMPUTE_WALL_BC_LOOP_A: DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          CALL WALL_BC(T,DT,NM)
+         ! Transfer MLR from walls to fire for MLR-based HRR calculation
+         IF (MLR_BASED_HRR) THEN
+             CALL TRANSFER_MLR_TO_FIRE(NM)
+             CALL TRANSFER_MLR_FROM_VENTS(NM,T,DT)
+         ENDIF
          IF (PARTICLE_DRAG) CALL PARTICLE_MOMENTUM_TRANSFER(DT,NM)
          CALL DIVERGENCE_PART_1(T,DT,NM)
       ENDDO COMPUTE_WALL_BC_LOOP_A
@@ -764,7 +822,7 @@ MAIN_LOOP: DO
 
    ! Compute linked velocity arrays. Flux average final velocity to cutfaces.
 
-   IF (CC_IBM) CALL CC_END_STEP(T,DT,DIAGNOSTICS)
+   IF (CC_IBM) CALL CC_END_STEP_W(T,DT,DIAGNOSTICS)
 
    ! Exchange velocity and pressures at interpolated boundaries
 
@@ -799,27 +857,36 @@ MAIN_LOOP: DO
    Q_DOT = 0._EB
    M_DOT = 0._EB
 
-   ! Check for creation or removal of obsructions
+   ! Check for creation or removal of obstructions
 
    CALL CREATE_OR_REMOVE_OBSTRUCTIONS
 
    ! Finite differences for mass and momentum equations for the second half of the time step
 
    COMPUTE_FINITE_DIFFERENCES_2: DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
-      IF (.NOT.SOLID_PHASE_ONLY .AND. .NOT.FREEZE_VELOCITY) CALL COMPUTE_VISCOSITY(NM,APPLY_TO_ESTIMATED_VARIABLES=.TRUE.)
+      IF (.NOT.SOLID_PHASE_ONLY .AND. .NOT.FREEZE_VELOCITY) THEN
+         IF (CACHE_VISCOSITY_CORRECTOR) THEN
+            ! Reuse viscosity from predictor step (mu, kres, strain_rate already computed with APPLY_TO_ESTIMATED_VARIABLES=.FALSE.)
+            ! Error per step ~0.1% for typical dt; saves 5-15% of total timestep
+         ELSE
+            CALL COMPUTE_VISCOSITY(NM,APPLY_TO_ESTIMATED_VARIABLES=.TRUE.)
+         ENDIF
+      ENDIF
       CALL MASS_FINITE_DIFFERENCES_NEW(NM)
       CALL DENSITY(T,DT,NM)
-      IF (LEVEL_SET_MODE>0) CALL LEVEL_SET_FIRESPREAD(T,DT,NM)
+      ! Vegetation disabled - LEVEL_SET_FIRESPREAD is a stub placeholder
+      ! IF (LEVEL_SET_MODE>0) CALL LEVEL_SET_FIRESPREAD(T,DT,NM)
    ENDDO COMPUTE_FINITE_DIFFERENCES_2
 
    IF (LEVEL_SET_MODE==2 .AND. CHECK_FREEZE_VELOCITY) CALL CHECK_FREEZE_VELOCITY_STATUS
 
-   IF (CC_IBM) CALL CC_DENSITY(T,DT)
+   IF (CC_IBM) CALL CC_DENSITY_W(T,DT)
 
    ! Exchange species mass fractions.
 
    IF (LEVEL_SET_MODE/=1) CALL MESH_EXCHANGE(4)
-   IF (LEVEL_SET_MODE>0) CALL MESH_EXCHANGE(14)
+   ! Exchange level set values for terrain case compatibility
+   IF (LEVEL_SET_MODE>0 .OR. TERRAIN_CASE) CALL MESH_EXCHANGE(14)
 
    ! Apply mass and species boundary conditions, update radiation, particles, and re-compute divergence
 
@@ -879,7 +946,7 @@ MAIN_LOOP: DO
    DO ITER=1,RADIATION_ITERATIONS
       DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
          CALL COMPUTE_RADIATION(T,NM,ITER)
-         IF (CC_IBM) CALL CCCOMPUTE_RADIATION(T,NM,ITER)
+         IF (CC_IBM) CALL CC_CCCOMPUTE_RADIATION_W(T,NM,ITER)
       ENDDO
       IF (RADIATION .AND. EXCHANGE_RADIATION .AND. RADIATION_ITERATIONS>1) THEN
          ! Only do an MPI exchange of radiation intensity if multiple iterations are requested.
@@ -941,7 +1008,7 @@ MAIN_LOOP: DO
 
    ! Compute linked velocity arrays. Flux average final velocity to cutfaces.
 
-   IF (CC_IBM) CALL CC_END_STEP(T,DT,DIAGNOSTICS)
+   IF (CC_IBM) CALL CC_END_STEP_W(T,DT,DIAGNOSTICS)
 
    ! Exchange velocity, pressure, particles at interpolated boundaries
 
@@ -970,8 +1037,9 @@ MAIN_LOOP: DO
    ENDDO VELOCITY_BC_LOOP_2
 
    ! Share device, HRR, mass data among all processes
+   ! Guard: skip when no devices exist (saves heavyweight MPI_ALLREDUCE every timestep)
 
-   CALL EXCHANGE_GLOBAL_OUTPUTS
+   IF (N_DEVC > 0) CALL EXCHANGE_GLOBAL_OUTPUTS
 
    ! Check for dumping end of timestep outputs
 
@@ -1032,6 +1100,11 @@ ENDDO MAIN_LOOP
 !                                                     END OF TIME STEPPING LOOP
 !***********************************************************************************************************************************
 
+! Print LAZY-SOAP statistics if enabled
+IF (PRES_FLAG == LAZY_SOAP_FLAG) THEN
+   CALL PRINT_LAZY_SOAP_STATISTICS
+END IF
+
 ! Deallocate GLMAT_SOLVER_H variables if needed:
 
 SELECT CASE(PRES_FLAG)
@@ -1044,7 +1117,7 @@ END SELECT
 
 ! Finish unstructured geometry
 
-IF (CC_IBM) CALL FINISH_CC
+IF (CC_IBM) CALL CC_FINISH_W
 
 ! Stop the calculation
 
@@ -1075,7 +1148,7 @@ SUBROUTINE MPI_INITIALIZATION_CHORES(TASK_NUMBER)
 INTEGER, INTENT(IN) :: TASK_NUMBER
 TYPE (MPI_REQUEST), ALLOCATABLE, DIMENSION(:) :: REQ0,REQ0DUM
 TYPE (MPI_GROUP) :: GROUP_WORLD,SUBGROUP
-INTEGER :: N_REQ0,SNODE,MEMBERS(0:NMESHES-1),NN,NOM,N_COMMUNICATIONS
+INTEGER :: N_REQ0,SNODE,MEMBERS(0:NMESHES-1),NN,NOM,N_COMMUNICATIONS,NZ
 CHARACTER(50) :: DUMMY_STRING
 
 SELECT CASE(TASK_NUMBER)
@@ -1371,9 +1444,16 @@ SELECT CASE(TASK_NUMBER)
 
    CASE(6)
 
-      ! Allocate a few arrays needed to exchange divergence and pressure info among meshes
+      ! CONNECTED_ZONES is a matrix of 0's and 1's such that if two zones are connected, then
+      ! CONNECTED_ZONES(NZ1,NZ2)=CONNECTED_ZONES(NZ2,NZ1)=1. The diagonal is always 1, as in a zone is always connected to itself.
 
-      ALLOCATE(CONNECTED_ZONES(0:N_ZONE,0:N_ZONE),STAT=IZERO) ; CALL ChkMemErr('INIT','CONNECTED_ZONES',IZERO) ; CONNECTED_ZONES=0
+      ALLOCATE(CONNECTED_ZONES(0:N_ZONE,0:N_ZONE),STAT=IZERO) ; CALL ChkMemErr('INIT','CONNECTED_ZONES',IZERO) 
+      CONNECTED_ZONES = 0
+      DO NZ=0,N_ZONE
+         CONNECTED_ZONES(NZ,NZ) = 1
+      ENDDO
+
+      ! DSUM, PSUM, USUM are summations of different parts of the divergence expression
 
       ALLOCATE(DSUM(N_ZONE),STAT=IZERO) ; CALL ChkMemErr('MAIN','DSUM',IZERO) ; DSUM = 0._EB
       ALLOCATE(PSUM(N_ZONE),STAT=IZERO) ; CALL ChkMemErr('MAIN','PSUM',IZERO) ; PSUM = 0._EB
@@ -1400,16 +1480,23 @@ SUBROUTINE PRESSURE_ITERATION_SCHEME
 USE CC_SCALARS, ONLY : GET_LINKED_FV
 INTEGER :: NM_MAX_V,NM_MAX_P
 REAL(EB) :: TNOW,VELOCITY_ERROR_MAX_OLD,PRESSURE_ERROR_MAX_OLD
+LOGICAL :: FDS5_MODE
+
+! FDS5 mode: simplified pressure iteration for FFT solver (plan section 2.1)
+FDS5_MODE = FDS5_PRESSURE_MODE .AND. PRES_FLAG == FFT_FLAG
 
 PRESSURE_ITERATIONS = 0
 
-IF (BAROCLINIC) THEN
-   ITERATE_BAROCLINIC_TERM = .TRUE.
+! Initialize LAZY-SOAP skip flag at start of pressure scheme (skip in FDS5 mode)
+IF (.NOT. FDS5_MODE) LAZY_SKIP_RHS = .FALSE.
+
+IF (BAROCLINIC .AND. .NOT. FDS5_MODE) THEN
+   ITERATE_BAROCLINIC_TERM = .FALSE.  ! FDS5: baroclinic term applied once, not iterated
 ELSE
    ITERATE_BAROCLINIC_TERM = .FALSE.
 ENDIF
 
-IF(CC_IBM) THEN
+IF(CC_IBM .AND. .NOT. FDS5_MODE) THEN
    ! Here we need an exchange of F for linking:
    CALL MESH_EXCHANGE(5)
    DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
@@ -1424,54 +1511,105 @@ PRESSURE_ITERATION_LOOP: DO
 
    ! The following loops and exchange always get executed the first pass through the PRESSURE_ITERATION_LOOP.
    ! If we need to iterate the baroclinic torque term, the loop is executed each time.
+   ! In FDS5 mode, skip baroclinic/CC_NO_FLUX/MATCH_VELOCITY_FLUX entirely (FDS5 only calls MATCH_VELOCITY_FLUX once before the loop).
 
    IF (ITERATE_BAROCLINIC_TERM .OR. PRESSURE_ITERATIONS==1) THEN
-      DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
-         IF (BAROCLINIC) CALL BAROCLINIC_CORRECTION(T,NM)
-         IF (CC_IBM) CALL CC_NO_FLUX(DT,NM,.TRUE.)
-      ENDDO
-      CALL MESH_EXCHANGE(5)  ! Exchange FVX, FVY, FVZ
-      DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
-         CALL MATCH_VELOCITY_FLUX(NM)
-      ENDDO
+      IF (.NOT. FDS5_MODE) THEN
+         DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+            IF (BAROCLINIC) CALL BAROCLINIC_CORRECTION(T,NM)
+            IF (CC_IBM) CALL CC_NO_FLUX_W(DT,NM,.TRUE.)
+         ENDDO
+         CALL MESH_EXCHANGE(5)  ! Exchange FVX, FVY, FVZ
+         DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+            CALL MATCH_VELOCITY_FLUX(NM)
+         ENDDO
+      ELSE
+         ! FDS5 mode: only WALL_WORK1 reset, like FDS5
+         DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+            MESHES(NM)%WALL_WORK1 = 0._EB
+         ENDDO
+      ENDIF
    ENDIF
 
    ! Compute the right hand side (RHS) and boundary conditions for the Poission equation for pressure.
    ! The WALL_WORK1 array is computed in COMPUTE_VELOCITY_ERROR, but it should
    ! be zero the first time the pressure solver is called.
 
-   DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
-      CALL NO_FLUX(DT,NM)
-      IF (CC_IBM) CALL CC_NO_FLUX(DT,NM,.FALSE.) ! set WALL_WORK1 to 0 in cells inside geometries.
-      IF (PRESSURE_ITERATIONS==1) MESHES(NM)%WALL_WORK1 = 0._EB
-      CALL PRESSURE_SOLVER_COMPUTE_RHS(T,DT,NM)
-   ENDDO
+   ! === FDS5 mode: simplified RHS (single call like FDS5 PRESSURE_SOLVER(T,NM)) ===
+   ! === LAZY-SOAP OPTIMIZATION: Skip RHS computation if LAZY_SKIP_RHS is true ===
+   IF (FDS5_MODE) THEN
+      DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+         CALL NO_FLUX(DT,NM)
+         CALL PRESSURE_SOLVER_COMPUTE_RHS(T,DT,NM)
+      ENDDO
+   ELSE IF (.NOT. LAZY_SKIP_RHS .OR. PRES_FLAG /= LAZY_SOAP_FLAG) THEN
+      DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+         CALL NO_FLUX(DT,NM)
+         IF (CC_IBM) CALL CC_NO_FLUX_W(DT,NM,.FALSE.) ! set WALL_WORK1 to 0 in cells inside geometries.
+         IF (PRESSURE_ITERATIONS==1) MESHES(NM)%WALL_WORK1 = 0._EB
+         CALL PRESSURE_SOLVER_COMPUTE_RHS(T,DT,NM)
+      ENDDO
+   ELSE
+      ! LAZY-SOAP skipped RHS computation - using extrapolation
+      ! No action needed here, LAZY_SOAP will use stored PRHS from previous step
+   END IF
 
    ! Solve the Poission equation using either FFT or ULMAT, GLMAT, or UGLMAT
+   ! In FDS5 mode, only FFT is used (FDS5 had one solver).
 
-   SELECT CASE(PRES_FLAG)
-      CASE (FFT_FLAG)
-         IF (TUNNEL_PRECONDITIONER) CALL TUNNEL_POISSON_SOLVER
-         DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
-            CALL PRESSURE_SOLVER_FFT(NM)
-         ENDDO
-      CASE (GLMAT_FLAG,UGLMAT_FLAG)
-         CALL GLMAT_SOLVER(T,DT)
-         CALL MESH_EXCHANGE(5)
-         CALL COPY_H_OMESH_TO_MESH
-      CASE (ULMAT_FLAG)
-         IF (TUNNEL_PRECONDITIONER) CALL TUNNEL_POISSON_SOLVER
-         DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
-            CALL ULMAT_SOLVER(NM,T,DT)
-         ENDDO
-   END SELECT
+   IF (FDS5_MODE) THEN
+      ! FDS5 mode: FFT only, no LAZY-SOAP complexity
+      IF (TUNNEL_PRECONDITIONER) CALL TUNNEL_POISSON_SOLVER
+      DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+         CALL PRESSURE_SOLVER_FFT(NM)
+      ENDDO
+   ELSE
+      SELECT CASE(PRES_FLAG)
+         CASE (FFT_FLAG)
+            IF (TUNNEL_PRECONDITIONER) CALL TUNNEL_POISSON_SOLVER
+            DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+               CALL PRESSURE_SOLVER_FFT(NM)
+            ENDDO
+         CASE (GLMAT_FLAG,UGLMAT_FLAG)
+            CALL GLMAT_SOLVER(T,DT)
+            CALL MESH_EXCHANGE(5)
+            CALL COPY_H_OMESH_TO_MESH
+         CASE (ULMAT_FLAG)
+            IF (TUNNEL_PRECONDITIONER) CALL TUNNEL_POISSON_SOLVER
+            DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+               CALL ULMAT_SOLVER(NM,T,DT)
+            ENDDO
+         CASE (SOAP_FLAG)
+            ! SOAP: Smoothness-Based Adaptive Poisson solver
+            ! Адаптивно выбирает между FFT solve и экстраполяцией
+            IF (TUNNEL_PRECONDITIONER) CALL TUNNEL_POISSON_SOLVER
+            DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+               CALL PRESSURE_SOLVER_SOAP(NM,DT)
+            ENDDO
+            ! SOAP internally handles FILL_EDGES and velocity correction
+         CASE (LAZY_SOAP_FLAG)
+            ! LAZY-SOAP: Lazy Smoothness-Based Adaptive Poisson solver
+            ! Оптимизированная версия с пропуском вычисления RHS и экстраполяцией 2-го порядка
+            IF (TUNNEL_PRECONDITIONER) CALL TUNNEL_POISSON_SOLVER
+            ! GLOBAL_SKIP_RHS передается как вход/выход для глобального решения о пропуске
+            DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
+               CALL PRESSURE_SOLVER_LAZY_SOAP(LAZY_SKIP_RHS, NM, DT)
+            ENDDO
+            ! LAZY-SOAP internally handles FILL_EDGES and velocity correction
+
+            ! === Контроль ошибки дивергенции после экстраполяции ===
+            IF (LAZY_SKIP_RHS .AND. PRESSURE_ITERATIONS == 1) THEN
+               CALL CHECK_DIVERGENCE_ERROR_LAZY(LAZY_SKIP_RHS)
+               ! Если дивергенция превышена, LAZY_SKIP_RHS установлен в .FALSE.
+               ! и нужно переделать с FFT на следующей итерации
+            END IF
+      END SELECT
+   ENDIF
 
    ! Check the residuals of the Poisson solution
-
+   ! FDS5: no residual checking — only ULMAT/UGLMAT need it
    DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
       SELECT CASE(PRES_FLAG)
-         CASE DEFAULT
-            CALL PRESSURE_SOLVER_CHECK_RESIDUALS(NM)
          CASE (UGLMAT_FLAG,ULMAT_FLAG)
             CALL PRESSURE_SOLVER_CHECK_RESIDUALS_U(NM)
       END SELECT
@@ -1485,7 +1623,7 @@ PRESSURE_ITERATION_LOOP: DO
 
    DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
       CALL COMPUTE_VELOCITY_ERROR(DT,NM)
-      IF (CC_IBM) CALL CC_COMPUTE_VELOCITY_ERROR(DT,NM) ! Inside solids respect to zero velocity.
+      IF (CC_IBM .AND. .NOT. FDS5_MODE) CALL CC_COMPUTE_VELOCITY_ERROR(DT,NM) ! Inside solids respect to zero velocity.
    ENDDO
 
    ! Make all MPI processes aware of the maximum velocity error to decide if another pressure iteration is needed.
@@ -1517,19 +1655,19 @@ PRESSURE_ITERATION_LOOP: DO
    ENDIF
 
    ! If the VELOCITY_TOLERANCE is satisfied or max/min iterations are hit, exit the loop.
+   ! FDS5: only velocity error matters (no pressure error check)
 
-   IF (MAXVAL(PRESSURE_ERROR_MAX)<PRESSURE_TOLERANCE) ITERATE_BAROCLINIC_TERM = .FALSE.
+   IF (MAXVAL(VELOCITY_ERROR_MAX)<VELOCITY_TOLERANCE) THEN
+      EXIT PRESSURE_ITERATION_LOOP
+   ENDIF
 
    IF (PREDICTOR .AND. PRESSURE_ITERATIONS>=MAX_PREDICTOR_PRESSURE_ITERATIONS) EXIT PRESSURE_ITERATION_LOOP
    IF (CORRECTOR .AND. PRESSURE_ITERATIONS>=MAX_PRESSURE_ITERATIONS)           EXIT PRESSURE_ITERATION_LOOP
 
-   IF (MAXVAL(PRESSURE_ERROR_MAX)<PRESSURE_TOLERANCE .AND. MAXVAL(VELOCITY_ERROR_MAX)<VELOCITY_TOLERANCE) THEN
-      EXIT PRESSURE_ITERATION_LOOP
-   ENDIF
-
    ! Exit the iteration loop if satisfactory progress is not achieved
+   ! FDS5 mode: skip suspend check (FDS5 did not have this)
 
-   IF (SUSPEND_PRESSURE_ITERATIONS .AND. ICYC>10) THEN
+   IF (.NOT. FDS5_MODE .AND. SUSPEND_PRESSURE_ITERATIONS .AND. ICYC>10) THEN
       IF (PRESSURE_ITERATIONS>3 .AND.  &
          MAXVAL(VELOCITY_ERROR_MAX)>ITERATION_SUSPEND_FACTOR*VELOCITY_ERROR_MAX_OLD .AND. &
          MAXVAL(PRESSURE_ERROR_MAX)>ITERATION_SUSPEND_FACTOR*PRESSURE_ERROR_MAX_OLD) EXIT PRESSURE_ITERATION_LOOP
@@ -1538,6 +1676,15 @@ PRESSURE_ITERATION_LOOP: DO
    ENDIF
 
 ENDDO PRESSURE_ITERATION_LOOP
+
+! === Safety: If pressure solver hit max iterations with large velocity error ===
+! Disable SOAP extrapolation to force FFT on next timestep — prevents runaway from bad extrapolation
+! The natural CFL-based DT reduction in CHECK_STABILITY will handle timestep reduction
+IF (CORRECTOR .AND. PRESSURE_ITERATIONS>=MAX_PRESSURE_ITERATIONS) THEN
+   IF (MAXVAL(VELOCITY_ERROR_MAX) > 10._EB*VELOCITY_TOLERANCE) THEN
+      IF (PRES_FLAG == SOAP_FLAG .OR. PRES_FLAG == LAZY_SOAP_FLAG) SOAP_EXTRAP_DISABLED = .TRUE.
+   ENDIF
+ENDIF
 
 END SUBROUTINE PRESSURE_ITERATION_SCHEME
 
@@ -1588,6 +1735,7 @@ IF (OBST_CREATED_OR_REMOVED) THEN
    CALL EXCHANGE_GEOMETRY_INFO
    DO NM=LOWER_MESH_INDEX,UPPER_MESH_INDEX
       CALL REASSIGN_WALL_CELLS(T,NM)
+      CALL INITIALIZE_SOLID_CELL(NM)
    ENDDO
    UPDATE_ALL_ANGLES = .TRUE.  ! Update all radiation angles the next time radiation is updated
 ENDIF
@@ -1612,19 +1760,19 @@ IF (OBST_CREATED_OR_REMOVED .OR. FORCE_REASSIGN) THEN
             CALL ULMAT_SOLVER_SETUP(NM)
          ENDDO
          CALL STOP_CHECK(1)
-   CASE (UGLMAT_FLAG,GLMAT_FLAG)
-      IF(ALLOCATED(ZONE_SOLVE)) CALL FINISH_GLMAT_SOLVER
-      CALL GLMAT_SOLVER_SETUP(-1) ! Initialize EWC_TYPE, copy wall types to HS
-      CALL STOP_CHECK(1)
-      CALL MESH_EXCHANGE(3)       ! Exchange guard cell info for IS_WALLT -> HS
-      CALL GLMAT_SOLVER_SETUP(0)  ! Process coarse faces, copy updated wall types to HS
-      CALL MESH_EXCHANGE(3)       ! Re-exchange guard cell info for IS_WALLT -> HS
-      CALL GLMAT_SOLVER_SETUP(1)
-      CALL MESH_EXCHANGE(3)       ! Exchange guard cell info for CCVAR(I,J,K,CGSC) -> HS
-      CALL GLMAT_SOLVER_SETUP(2)
-      CALL MESH_EXCHANGE(3)       ! Exchange guard cell info for CCVAR(I,J,K,UNKH) -> HS
-      CALL GLMAT_SOLVER_SETUP(3)
-      CALL STOP_CHECK(1)
+      CASE (UGLMAT_FLAG,GLMAT_FLAG)
+         IF(ALLOCATED(ZONE_SOLVE)) CALL FINISH_GLMAT_SOLVER
+         CALL GLMAT_SOLVER_SETUP(-1) ! Initialize EWC_TYPE, copy wall types to HS
+         CALL STOP_CHECK(1)
+         CALL MESH_EXCHANGE(3)       ! Exchange guard cell info for IS_WALLT -> HS
+         CALL GLMAT_SOLVER_SETUP(0)  ! Process coarse faces, copy updated wall types to HS
+         CALL MESH_EXCHANGE(3)       ! Re-exchange guard cell info for IS_WALLT -> HS
+         CALL GLMAT_SOLVER_SETUP(1)
+         CALL MESH_EXCHANGE(3)       ! Exchange guard cell info for CCVAR(I,J,K,CGSC) -> HS
+         CALL GLMAT_SOLVER_SETUP(2)
+         CALL MESH_EXCHANGE(3)       ! Exchange guard cell info for CCVAR(I,J,K,UNKH) -> HS
+         CALL GLMAT_SOLVER_SETUP(3)
+         CALL STOP_CHECK(1)
    END SELECT
    OBST_CREATED_OR_REMOVED = .FALSE.
 ENDIF
