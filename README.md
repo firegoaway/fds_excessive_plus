@@ -1,30 +1,67 @@
-## Fire Dynamics Simulator and Smokeview
+# fds_excessive_plus
 
-*Continuous Integration. Continuous Improvement.*
+Глубоко переработанный гибрид FDS, предназначенный для выполнения пожарно-технических расчётов по российским методикам.
 
-Fire Dynamics Simulator ([FDS](https://github.com/firemodels/fds)) is a large-eddy simulation (LES) code for low-speed flows, with an emphasis on smoke and heat transport from fires.
+Разработка **EXCESSIVE+** началась в 2023 году с изучения исходного кода FDS и литературы.
 
-Smokeview ([SMV](https://github.com/firemodels/smv)) is a visualization program used to display the output of FDS and [CFAST](https://github.com/firemodels/cfast) simulations.
+В качестве численного ядра избран метод [**Stable Fluids**](http://luthuli.cs.uiuc.edu/~daf/courses/Games/SimList/Papers/Stam-1999-SF.pdf) и противодействующая ему схема [**RTFD**](https://damassets.autodesk.net/content/dam/autodesk/research/publications-assets/pdf/realtime-fluid-dynamics-for.pdf) с учётом сохранения массы, реального тепловыделения и скоростей с пренебрежением химическим компонентом (предиктора) и серьёзным упрощением физики турбулентности.
 
-For more information, including a link to our discussion forum, please visit the [FDS-SMV website](https://pages.nist.gov/fds-smv/).
+В сборку включен полностью готовый к работе модуль эвакуации "EVAC+", основанный на положениях [**индивидуально-поточной модели эвакуации людей**](https://ivo.garant.ru/#/document/406577165/paragraph/1315/doclist/6480/1/0/0/%D0%BC%D0%B5%D1%82%D0%BE%D0%B4%D0%B8%D0%BA%D0%B0%201140:0). В модуле **EVAC+** реализован как постоянный, так и блуждающий дискретный шаг, позволяющий использовать гибридную эвакуационную модель, включающую в том числе имитационно-плотностную спецификацию (для однородных людских групп в расчете используется не индивидуальная плотность, а потоковая).
 
-Here is a link to our [Firebot Build Status](https://pages.nist.gov/fds-smv/firebot_status.html).
+Тепловыделение задаётся по предписанным формулам из [**Приложения №1 Методики №1140 МЧС России**](https://ivo.garant.ru/#/document/406577165/paragraph/177/doclist/6480/1/0/0/методика%201140:0).
 
-Here is a link to [contributing](https://github.com/firemodels/fds/blob/master/CONTRIBUTING.md) to the FDS and Smokeview project.
+## Совместимость
 
-Here are some other useful links:
+Входные файлы формата `.fds` читаются без адаптации.
 
-[FDS-SMV Downloads (includes Release Documentation)](https://github.com/firemodels/fds/releases)
+Выходные файлы полностью совместимы с SmokeView и инструментами обработки FDS6.
 
-[Smokeview Downloads](https://github.com/firemodels/smv/releases)
+Поддерживаются файлы, подготовленные вручную и экспортированные из Pyrosim, Fenix+ и UrbanPO.
 
-[Discussions](https://github.com/firemodels/fds/discussions)
+Подсистема совместимости в `read.f90` и `dump.f90` обеспечивает:
 
-[FDS Issues](https://github.com/firemodels/fds/issues)
+- чтение, преобразование и контролируемое игнорирование конструкций синтаксиса FDS6;
+- объединённые смеси `AIR` и `PRODUCTS`;
+- задание реакции параметрами `SPEC_ID_NU` и `NU`;
+- величины `DEVC` и `CTRL` версии FDS6;
+- управляющие функции `EXTERNAL` с вводом из CSV-файлов;
+- обработку экспортов, включая итерирование `INPUT_ID` ограниченным циклом (устраняет аварийное завершение на конструкциях `INPUT_ID(1:40)`);
+- сохранение выходных файлов в форматах, читаемых SmokeView и средствами обработки FDS6.
 
-[Smokeview Issues](https://github.com/firemodels/smv/issues)
+## Важные инженерные допущения
 
-[Nightly Builds (includes Documentation)](https://github.com/firemodels/test_bundles/releases/tag/FDS_TEST)
+Режим заданного профиля горения, обусловленный [**Приложением №1 Методики №1140 МЧС России**](https://ivo.garant.ru/#/document/406577165/paragraph/177/doclist/6480/1/0/0/методика%201140:0), не учитывает потребление кислорода. Мощность задаётся функцией `RAMP_Q` или `TAU_Q` независимо от локального состава газа. Характеристи очаговой зоны рассчитываются приближённо вследствие принудительного распределения тепловыделения по коническому объёму.
 
-Pull requests welcome!
+По сути, пожар, как физический процесс, инициируется лишь функцией $\Psi$:
 
+$$\begin{cases} \Psi = \psi_{уд} \cdot \pi \cdot \ v^2 \cdot t^2 \\ \Psi = \psi_{уд} \cdot \pi \cdot \ v \cdot b \end{cases}$$
+
+Она выступает и предиктором и корректором, что глобально противоречит оригинальному FDS 6, поскольку в оригинале массовый расход $\Psi$ и скорость тепловыделения $Q$ зависят только от числа турбулентных перемешиваний на границе твердой и газовой зон.
+
+## Фундаментальные ограничения области применения FDS E+
+
+**FDS EXCESSIVE+** имеет ряд фундаментальных ограничений, не позволяющих использовать его для исследовательских целей. Ниже приведен перечень этих ограничений.
+
+**FDS E+ КАТЕГОРИЧЕСКИ НЕ ПРЕДНАЗНАЧЕН ДЛЯ ИССЛЕДОВАНИЯ:**
+- турбулентности, фазы возбуждения и расщепления, их влияния на динамику пожара;
+- химических реакций в твердой и газовой фазе *(пожарная динамика в FDS E+ задана сверху и никак не зависит от химического решателя и стехиометрии; Сложная стехиометрия вынесена за пределы цепочки тепло-, массообмена и не подчиняется стехиометрическому оператору)*;
+- влияния систем и средств отопления, вентиляции и кондиционирования на динамику пожара;
+- влияния систем и средств приточной, вытяжной и естественной противодымной вентиляции на динамику пожара;
+- процесса догорания, выгорания и подавления в твёрдной и газовой фазе;
+- числа Маха в зонах расширения;
+- влияния теплопроводности и теплоёмкости материалов на динамику пожара;
+- распространения пожара по твердым горючим поверхностям.
+
+**FDS E+ позволяет:**
+- исследовать влияние ОФП на безопасную эвакуацию людей;
+- исследовать влияние внешних сил $f$ и источников $S$ на динамику ОФП.
+
+## Лицензирование
+
+Исходный код FDS разработан NIST.
+
+Условия использования приведены в файле `LICENSE.md`.
+
+Изменения форка распространяются на условиях GNU GPL версии 3.
+
+Полный текст лицензии приведён в файле `LICENSE`.

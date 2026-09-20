@@ -34,6 +34,7 @@ INTEGER, INTENT(IN) :: NM
 LOGICAL :: CALL_HT_1D
 REAL(EB) :: DT_BC,SLIP_COEF
 INTEGER :: IW,IP,ICF,ITW
+LOGICAL :: FDS5_CASE_IS_SIMPLE
 TYPE(WALL_TYPE), POINTER :: WC
 TYPE(THIN_WALL_TYPE), POINTER :: TW
 TYPE(SURFACE_TYPE), POINTER :: SF
@@ -49,6 +50,21 @@ IF (LEVEL_SET_MODE==1) RETURN  ! No need for boundary conditions if the simulati
 TNOW=CURRENT_TIME()
 
 CALL POINT_TO_MESH(NM)
+
+! A note concerning the pointers below.
+! At the PREDICTOR stage of the time step, RHOS and ZZS are the estimated density and species fields, and PBAR_S is the
+! estimated background pressure. At the CORRECTOR stage, RHO, ZZ, and PBAR are the corrected (final) values.
+! This routine, WALL_BC, assigns boundary values for these fields.
+! However, at this point in the PREDICTOR stage, (US,VS,WS) has NOT been calculated, nor has (U,V,W) in the CORRECTOR. 
+! So why point to them?
+! The reason is that it is not unusual for the components of velocity to change sign from the PREDICTOR to the CORRECTOR stage.
+! If that happens, the INFLOW/OUTFLOW condition at an OPEN boundary becomes inconsistent. That is, what is thought to be an 
+! OUFLOW boundary during the PREDICTOR stage, say, might actually be treated as INFLOW during the next advection calculation in the 
+! CORRECTOR stage because the velocity field to be used in the advection calculation is not yet known. 
+! The pointers used here assume that a velocity component, say US, is less likely to change sign from
+! one time step to the next, especially when U and US have different signs. Thus, the US computed at the end of the PREDICTOR 
+! stage of the previous time step is more likely to have the same sign as the US that is to be computed at the end of the 
+! PREDICTOR stage of the current time step and used in the advection of the energy/species in the CORRECTOR stage.
 
 IF (PREDICTOR) THEN
    UU => US
@@ -80,6 +96,19 @@ IF (.NOT.INITIALIZATION_PHASE .AND. CORRECTOR) THEN
       HT_3D_SWEEP_DIRECTION = HT_3D_SWEEP_DIRECTION + 1
       IF (HT_3D_SWEEP_DIRECTION>3) HT_3D_SWEEP_DIRECTION = 1
    ENDIF
+ENDIF
+
+! FDS5-style single-pass: collapse WALL_CELL_LOOP_0 + WALL_CELL_LOOP into one pass for simple cases
+FDS5_CASE_IS_SIMPLE = (.NOT. CC_IBM .AND. &
+                       N_THIN_WALL_CELLS == 0 .AND. &
+                       .NOT. SOLID_PARTICLES .AND. &
+                       .NOT. SOLID_HEAT_TRANSFER_3D .AND. &
+                       N_INTERNAL_CFACE_CELLS == 0)
+
+IF (FDS5_WALL_BC_PASS .AND. FDS5_CASE_IS_SIMPLE) THEN
+   CALL FDS5_STYLE_WALL_BC(T, DT, NM)
+   T_USED(6)=T_USED(6)+CURRENT_TIME()-TNOW
+   RETURN
 ENDIF
 
 ! For OpenMP, spin up threads so that they run through all the routines
@@ -258,6 +287,16 @@ ENDIF
 
 !$OMP END PARALLEL
 
+! Populate cached B1 property arrays — avoids 3-level indirection in CHECK_STABILITY
+DO IW=1,N_EXTERNAL_WALL_CELLS+N_INTERNAL_WALL_CELLS
+   WC => WALL(IW)
+   IF (WC%BOUNDARY_TYPE==NULL_BOUNDARY) CYCLE
+   B1 => BOUNDARY_PROP1(WC%B1_INDEX)
+   WALL_Q_CON_F_CACHE(IW) = B1%Q_CON_F
+   WALL_RHO_F_CACHE(IW)   = B1%RHO_F
+   WALL_RDN_CACHE(IW)     = B1%RDN
+ENDDO
+
 T_USED(6)=T_USED(6)+CURRENT_TIME()-TNOW
 END SUBROUTINE WALL_BC
 
@@ -392,9 +431,11 @@ TYPE(BOUNDARY_COORD_TYPE), POINTER :: BC
 TYPE(SURFACE_TYPE), POINTER :: SF
 TYPE(LAGRANGIAN_PARTICLE_TYPE), POINTER, OPTIONAL :: LP
 TYPE(THIN_WALL_TYPE), POINTER, OPTIONAL :: TW
-REAL(EB) :: TSI,RAMP_FACTOR,UBAR,VBAR,WBAR
+REAL(EB) :: TSI,RAMP_FACTOR,UBAR,VBAR,WBAR,TLW(0:1,0:1,0:1)
+INTEGER :: N,TLW_IND(1:3)
 
 IF (PRESENT(WALL_INDEX)) THEN
+
    IF (ABS(SF%T_IGN-T_BEGIN)<=SPACING(SF%T_IGN) .AND. SF%RAMP(TIME_VELO)%INDEX>=1) THEN
       TSI = T
    ELSE
@@ -415,16 +456,6 @@ IF (PRESENT(WALL_INDEX)) THEN
          VBAR = 0.5_EB*(VV(BC%IIG,BC%JJG,BC%KKG)+VV(BC%IIG,BC%JJG-1,BC%KKG)) - SF%VEL_T(2)*RAMP_FACTOR
          B1%U_TANG = SQRT(UBAR**2+VBAR**2)
    END SELECT
-ELSEIF (PRESENT(PARTICLE_INDEX)) THEN
-   UBAR = 0.5_EB*(UU(BC%IIG,BC%JJG,BC%KKG)+UU(BC%IIG-1,BC%JJG,BC%KKG)) - LP%U
-   VBAR = 0.5_EB*(VV(BC%IIG,BC%JJG,BC%KKG)+VV(BC%IIG,BC%JJG-1,BC%KKG)) - LP%V
-   WBAR = 0.5_EB*(WW(BC%IIG,BC%JJG,BC%KKG)+WW(BC%IIG,BC%JJG,BC%KKG-1)) - LP%W
-   B1%U_TANG = SQRT(UBAR**2+VBAR**2+WBAR**2)
-ENDIF
-
-! Set near-wall gas temperature, B1%TMP_G, and incoming radiation, B1%Q_RAD_IN
-
-IF (PRESENT(WALL_INDEX) .OR. PRESENT(PARTICLE_INDEX)) THEN
 
    IF (SF%TMP_GAS_FRONT > 0._EB) THEN
       B1%TMP_G = TMPA + EVALUATE_RAMP(T-T_BEGIN,SF%RAMP(TIME_TGF)%INDEX)*(SF%TMP_GAS_FRONT-TMPA)
@@ -434,6 +465,32 @@ IF (PRESENT(WALL_INDEX) .OR. PRESENT(PARTICLE_INDEX)) THEN
    ENDIF
    B1%RHO_G = RHOP(BC%IIG,BC%JJG,BC%KKG)
    B1%ZZ_G(1:N_TRACKED_SPECIES) = ZZP(BC%IIG,BC%JJG,BC%KKG,1:N_TRACKED_SPECIES)
+
+ELSEIF (PRESENT(PARTICLE_INDEX)) THEN
+   
+   IF (SF%TMP_GAS_FRONT > 0._EB) THEN
+      B1%TMP_G = TMPA + EVALUATE_RAMP(T-T_BEGIN,SF%RAMP(TIME_TGF)%INDEX)*(SF%TMP_GAS_FRONT-TMPA)
+      B1%Q_RAD_IN = B1%EMISSIVITY*SIGMA*B1%TMP_G**4
+   ENDIF
+   
+   ! For thermally thick particles, interpolate near-surface quantities. B1%U_TANG interpolation is in part.f90
+   IF (SF%THERMAL_BC_INDEX==THERMALLY_THICK) THEN 
+      ! Get reusable interpolation coefficients
+      CALL GET_TRILINEAR_WEIGHTS(BC%IIG,BC%JJG,BC%KKG,BC%X,BC%Y,BC%Z,TLW_IND,TLW)
+      IF (SF%TMP_GAS_FRONT < 0._EB) B1%TMP_G = SCALAR_TO_POINT(TLW_IND,TLW,TMP)
+      B1%RHO_G = SCALAR_TO_POINT(TLW_IND,TLW,RHOP)      
+      DO N=1,N_TRACKED_SPECIES
+         B1%ZZ_G(N) = SCALAR_TO_POINT(TLW_IND,TLW,ZZP(:,:,:,N))
+      ENDDO
+   ELSE 
+      IF (SF%TMP_GAS_FRONT < 0._EB) B1%TMP_G =  TMP(BC%IIG,BC%JJG,BC%KKG)
+      B1%RHO_G = RHOP(BC%IIG,BC%JJG,BC%KKG)
+      B1%ZZ_G(1:N_TRACKED_SPECIES) = ZZP(BC%IIG,BC%JJG,BC%KKG,1:N_TRACKED_SPECIES)
+      UBAR = 0.5_EB*(UU(BC%IIG,BC%JJG,BC%KKG)+UU(BC%IIG-1,BC%JJG,BC%KKG)) - LP%U
+      VBAR = 0.5_EB*(VV(BC%IIG,BC%JJG,BC%KKG)+VV(BC%IIG,BC%JJG-1,BC%KKG)) - LP%V
+      WBAR = 0.5_EB*(WW(BC%IIG,BC%JJG,BC%KKG)+WW(BC%IIG,BC%JJG,BC%KKG-1)) - LP%W
+      B1%U_TANG = SQRT(UBAR**2+VBAR**2+WBAR**2)
+   ENDIF
 
 ELSEIF (PRESENT(THIN_WALL_INDEX)) THEN
 
@@ -460,6 +517,227 @@ ELSEIF (PRESENT(THIN_WALL_INDEX)) THEN
 ENDIF
 
 END SUBROUTINE NEAR_SURFACE_GAS_VARIABLES
+
+
+REAL(EB) FUNCTION SCALAR_TO_POINT(TLW_IND,TLW,FIELD)
+
+INTEGER, INTENT(IN) :: TLW_IND(1:3)
+REAL(EB), INTENT(IN) :: TLW(0:1,0:1,0:1)
+REAL(EB), INTENT(IN), DIMENSION(-1:IBP1+1,-1:JBP1+1,-1:KBP1+1) :: FIELD
+INTEGER :: II,JJ,KK
+
+SCALAR_TO_POINT = 0._EB
+DO KK=0,1
+   DO JJ=0,1
+      DO II=0,1
+         SCALAR_TO_POINT = SCALAR_TO_POINT + &
+            TLW(II,JJ,KK) * FIELD(TLW_IND(IAXIS)+II, TLW_IND(JAXIS)+JJ, TLW_IND(KAXIS)+KK)
+      ENDDO
+   ENDDO
+ENDDO
+
+END FUNCTION SCALAR_TO_POINT
+
+!> \brief Get trilinear interpolation weights for cell-centered quantities
+!> \param IIG particle x cell index
+!> \param JJG particle y cell index
+!> \param KKG particle z cell index
+!> \param P_X particle x coordinate
+!> \param P_Y particle y coordinate
+!> \param P_Z particle z coordinate
+!> \param TLW_IND(AXIS,1:2) Output: upper and lower cell indices for interpolation
+!> \param TLW(0:1,0:1,0:1) Output: trilinear weights for the 8 cells
+SUBROUTINE GET_TRILINEAR_WEIGHTS(IIG,JJG,KKG,P_X,P_Y,P_Z,TLW_IND,TLW)
+
+INTEGER, INTENT(IN) :: IIG,JJG,KKG
+REAL(EB), INTENT(IN) :: P_X,P_Y,P_Z
+INTEGER, INTENT(OUT) :: TLW_IND(1:3)
+REAL(EB), INTENT(OUT) :: TLW(0:1,0:1,0:1)
+REAL(EB) :: P,PP,R,RR,S,SS,TLW_SUM
+LOGICAL :: VALID_MASK(0:1,0:1,0:1)
+INTEGER :: II,JJ,KK
+
+! Determine which cell centers to use based on particle location relative to cell center
+TLW_IND(IAXIS) = IIG; TLW_IND(JAXIS) = JJG; TLW_IND(KAXIS) = KKG
+! Particle is below cell center
+IF (P_X < XC(IIG)) TLW_IND(IAXIS) = IIG - 1
+IF (P_Y < YC(JJG)) TLW_IND(JAXIS) = JJG - 1
+IF (P_Z < ZC(KKG)) TLW_IND(KAXIS) = KKG - 1
+
+! Compute normalized coordinates within the interpolation box
+P = (P_X - XC(TLW_IND(IAXIS))) / MAX(TWO_EPSILON_EB, XC(TLW_IND(IAXIS)+1) - XC(TLW_IND(IAXIS)))
+R = (P_Y - YC(TLW_IND(JAXIS))) / MAX(TWO_EPSILON_EB, YC(TLW_IND(JAXIS)+1) - YC(TLW_IND(JAXIS)))
+S = (P_Z - ZC(TLW_IND(KAXIS))) / MAX(TWO_EPSILON_EB, ZC(TLW_IND(KAXIS)+1) - ZC(TLW_IND(KAXIS)))
+
+P = MIN(1._EB, MAX(0._EB, P))
+R = MIN(1._EB, MAX(0._EB, R))
+S = MIN(1._EB, MAX(0._EB, S))
+
+PP = 1._EB - P
+RR = 1._EB - R
+SS = 1._EB - S
+
+! Compute trilinear weights
+TLW(0,0,0) = PP * RR * SS
+TLW(1,0,0) = P  * RR * SS
+TLW(0,1,0) = PP * R  * SS
+TLW(0,0,1) = PP * RR * S
+TLW(1,1,0) = P  * R  * SS
+TLW(1,0,1) = P  * RR * S
+TLW(0,1,1) = PP * R  * S
+TLW(1,1,1) = P  * R  * S
+
+! Determine if any cells should be excluded (solid)
+VALID_MASK = .TRUE.
+DO KK=0,1
+   DO JJ=0,1
+      DO II=0,1
+         IF (CELL(CELL_INDEX(TLW_IND(IAXIS)+II,TLW_IND(JAXIS)+JJ,TLW_IND(KAXIS)+KK))%SOLID) &
+            VALID_MASK(II,JJ,KK) = .FALSE.
+      ENDDO
+   ENDDO
+ENDDO
+TLW_SUM = SUM(TLW, MASK=VALID_MASK)
+IF (TLW_SUM > TWO_EPSILON_EB) THEN
+   ! Zero out solids
+   WHERE (.NOT. VALID_MASK) TLW = 0._EB
+   ! Renormalize
+   WHERE (VALID_MASK) TLW = TLW / TLW_SUM
+ELSE
+   TLW = 0._EB
+ENDIF
+
+
+END SUBROUTINE GET_TRILINEAR_WEIGHTS
+
+
+!> \brief FDS5-style single-pass wall boundary conditions.
+!> Collapses WALL_CELL_LOOP_0 + WALL_CELL_LOOP into one serial loop to eliminate extra memory passes.
+!> Only called when CASE_IS_SIMPLE: no IBM, no thin walls, no particles, no 3D HT.
+!> \param T Current time (s)
+!> \param DT Current time step (s)
+!> \param NM Mesh number
+
+SUBROUTINE FDS5_STYLE_WALL_BC(T,DT,NM)
+
+USE TURBULENCE, ONLY: WALL_MODEL
+REAL(EB), INTENT(IN) :: T,DT
+INTEGER, INTENT(IN) :: NM
+LOGICAL :: CALL_HT_1D
+REAL(EB) :: DT_BC,SLIP_COEF
+INTEGER :: IW
+TYPE(WALL_TYPE), POINTER :: WC
+TYPE(SURFACE_TYPE), POINTER :: SF
+TYPE(BOUNDARY_COORD_TYPE), POINTER :: BC
+TYPE(BOUNDARY_PROP1_TYPE), POINTER :: B1
+TYPE(BOUNDARY_PROP2_TYPE), POINTER :: B2
+
+CALL POINT_TO_MESH(NM)
+
+! Set pointers based on predictor/corrector phase
+IF (PREDICTOR) THEN
+   UU => US
+   VV => VS
+   WW => WS
+   RHOP => RHOS
+   ZZP  => ZZS
+   PBAR_P => PBAR_S
+ELSE
+   UU => U
+   VV => V
+   WW => W
+   RHOP => RHO
+   ZZP  => ZZ
+   PBAR_P => PBAR
+ENDIF
+
+! Determine if thermally-thick heat transfer should be called
+CALL_HT_1D = .FALSE.
+IF (.NOT.INITIALIZATION_PHASE .AND. CORRECTOR) THEN
+   IF (WALL_COUNTER==WALL_INCREMENT) THEN
+      DT_BC    = T - BC_CLOCK
+      BC_CLOCK = T
+      CALL_HT_1D = .TRUE.
+   ENDIF
+ENDIF
+
+! Single pass over all wall cells — no OpenMP, no separate LOOP_0 pre-pass
+WALL_LOOP: DO IW=1,N_EXTERNAL_WALL_CELLS+N_INTERNAL_WALL_CELLS
+
+   WC => WALL(IW)
+   IF (WC%BOUNDARY_TYPE==NULL_BOUNDARY) CYCLE WALL_LOOP
+
+   BC => BOUNDARY_COORD(WC%BC_INDEX)
+   B1 => BOUNDARY_PROP1(WC%B1_INDEX)
+   B2 => BOUNDARY_PROP2(WC%B2_INDEX)
+   SF => SURFACE(WC%SURF_INDEX)
+
+   ! 1. Ghost cell values for external walls (multi-mesh interpolation)
+   IF (IW<=N_EXTERNAL_WALL_CELLS) CALL ASSIGN_GHOST_VALUE(IW,BC,B1)
+
+   ! 2. Near-surface gas variables (TMP_G, RHO_G, ZZ_G, U_TANG)
+   CALL NEAR_SURFACE_GAS_VARIABLES(T,SF,BC,B1,WALL_INDEX=IW)
+
+   ! 3. Heat transfer coefficient (needed before SOLID_HEAT_TRANSFER)
+   IF (CALL_HT_1D .AND. SF%THERMAL_BC_INDEX==THERMALLY_THICK) &
+      B1%HEAT_TRANS_COEF = HEAT_TRANSFER_COEFFICIENT(NM,T,B1%TMP_G-B1%TMP_F,SF,WALL_INDEX_IN=IW)
+
+   ! 4. Thermal BC: surface heat transfer or solid heat transfer (pyrolysis)
+   IF (.NOT.SF%THERMAL_BC_INDEX==THERMALLY_THICK) THEN
+      CALL SURFACE_HEAT_TRANSFER(NM,T,SF,BC,B1,WALL_INDEX=IW)
+   ELSEIF (CALL_HT_1D) THEN
+      CALL SOLID_HEAT_TRANSFER(NM,T,SF%HT_DIM*DT_BC,WALL_INDEX=IW)
+   ENDIF
+
+   ! 5. Diffusivity BC (rho*D at wall)
+   IF (N_TRACKED_SPECIES>1 .AND. WC%BOUNDARY_TYPE/=OPEN_BOUNDARY .AND. WC%BOUNDARY_TYPE/=INTERPOLATED_BOUNDARY) THEN
+      CALL CALCULATE_RHO_D_F(B1,BC,WALL_INDEX=IW)
+   ENDIF
+
+   ! 6. Wall model (friction velocity, y+, slip coefficient)
+   IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. &
+       (ANY(SPECIES_MIXTURE%CONDENSATION_SMIX_INDEX>0) .OR. DEPOSITION .OR. OUTPUT_WALL_QUANTITIES)) THEN
+      CALL WALL_MODEL(SLIP_COEF,B2%U_TAU,B2%Y_PLUS,MU_DNS(BC%IIG,BC%JJG,BC%KKG)/RHO(BC%IIG,BC%JJG,BC%KKG),SF%ROUGHNESS, &
+                      0.5_EB/B1%RDN,B1%U_TANG)
+   ENDIF
+
+   ! 7. Deposition (aerosol)
+   IF (DEPOSITION .AND. .NOT.INITIALIZATION_PHASE .AND. CORRECTOR .AND. .NOT.SOLID_PHASE_ONLY) THEN
+      IF (WC%BOUNDARY_TYPE==SOLID_BOUNDARY .AND. &
+         (ANY(SF%LEAK_PATH>0) .OR. &
+         (B1%NODE_INDEX==0 .AND. SF%VEL<TWO_EPSILON_EB .AND. SF%VOLUME_FLOW<TWO_EPSILON_EB))) THEN
+         CALL CALC_DEPOSITION(DT,BC,B1,B2,WALL_INDEX=IW)
+      ENDIF
+   ENDIF
+
+   ! 8. HVAC boundary conditions
+   IF (HVAC_SOLVE .AND. .NOT.INITIALIZATION_PHASE) THEN
+      IF (B1%NODE_INDEX/=0) CALL CALC_HVAC_BC(BC,B1,SF)
+   ENDIF
+
+   ! 9. Species BC (ZZ_F)
+   IF (WC%BOUNDARY_TYPE/=OPEN_BOUNDARY .AND. WC%BOUNDARY_TYPE/=INTERPOLATED_BOUNDARY) THEN
+      CALL CALCULATE_ZZ_F(T,DT,WALL_INDEX=IW)
+   ENDIF
+
+   ! 10. Density BC (RHO_F from ideal gas law)
+   IF (WC%BOUNDARY_TYPE/=INTERPOLATED_BOUNDARY) THEN
+      CALL CALCULATE_RHO_F(BC,B1,WALL_INDEX=IW)
+   ENDIF
+
+ENDDO WALL_LOOP
+
+! Populate cached B1 property arrays — avoids 3-level indirection in CHECK_STABILITY
+DO IW=1,N_EXTERNAL_WALL_CELLS+N_INTERNAL_WALL_CELLS
+   WC => WALL(IW)
+   IF (WC%BOUNDARY_TYPE==NULL_BOUNDARY) CYCLE
+   B1 => BOUNDARY_PROP1(WC%B1_INDEX)
+   WALL_Q_CON_F_CACHE(IW) = B1%Q_CON_F
+   WALL_RHO_F_CACHE(IW)   = B1%RHO_F
+   WALL_RDN_CACHE(IW)     = B1%RDN
+ENDDO
+
+END SUBROUTINE FDS5_STYLE_WALL_BC
 
 
 !> \brief Calculate the surface temperature TMP_F
@@ -515,8 +793,6 @@ ELSEIF (PRESENT(CFACE_INDEX)) THEN
 ELSEIF (PRESENT(PARTICLE_INDEX)) THEN
    LP => LAGRANGIAN_PARTICLE(PARTICLE_INDEX)
    LPC => LAGRANGIAN_PARTICLE_CLASS(LP%CLASS_INDEX)
-   RSUM_G = RSUM(BC%IIG,BC%JJG,BC%KKG)
-   MU_G   = MU(BC%IIG,BC%JJG,BC%KKG)
    IF (LPC%MASSLESS_TARGET) THEN  ! the particle's sole purpose is to record a heat flux
       PY => PROPERTY(LP%PROP_INDEX)
       IF (PY%HEAT_TRANSFER_COEFFICIENT>0._EB) THEN  ! the user has added a PROP line with a specified HTC
@@ -527,6 +803,8 @@ ELSEIF (PRESENT(PARTICLE_INDEX)) THEN
       B1%Q_CON_F = B1%HEAT_TRANS_COEF*(B1%TMP_G-PY%GAUGE_TEMPERATURE)
       RETURN
    ENDIF
+   CALL GET_SPECIFIC_GAS_CONSTANT(B1%ZZ_G(1:N_TRACKED_SPECIES),RSUM_G)
+   CALL GET_VISCOSITY(B1%ZZ_G(1:N_TRACKED_SPECIES),MU_G,B1%TMP_G)
 ENDIF
 
 ! Compute surface temperature, TMP_F, and convective heat flux, Q_CON_F, for various boundary conditions
@@ -913,7 +1191,7 @@ USE MATH_FUNCTIONS, ONLY : EVALUATE_RAMP, BOX_MULLER, INTERPOLATE1D_UNIFORM
 REAL(EB), INTENT(IN) :: T,DT
 REAL(EB) :: UN,DD,MFT,TSI,RSUM_F,MPUA_SUM,RHO_F_PREVIOUS,RN1,RN2,MFT_UNIFORM,Q_NEW(MAX_QDOTPP_REF)
 REAL(EB) :: T_SCALE(MAX_QDOTPP_REF),QDOTPP_REF(MAX_QDOTPP_REF),QDOTPP_T(MAX_QDOTPP_REF), &
-            QDOTPP,QDOTPP1,QDOTPP2,DT_SPYRO(MAX_QDOTPP_REF),CP,H_G,MW_RATIO
+            QDOTPP,QDOTPP1,QDOTPP2,DT_SPYRO(MAX_QDOTPP_REF),CP,H_G,MW_RATIO,HRR_TOTAL
 REAL(EB) :: RVC,M_DOT_PPP_SINGLE,ZZ_GET(1:N_TRACKED_SPECIES),DENOM
 INTEGER :: N,NS,IDX1,IDX2,NQ,ITER,IIO,JJO,KKO,OBST_INDEX,OTHER_MESH_OBST_INDEX,LL,SPECIES_BC_INDEX,IC,ICG
 INTEGER, INTENT(IN), OPTIONAL :: WALL_INDEX,CFACE_INDEX,PARTICLE_INDEX
@@ -1188,6 +1466,28 @@ METHOD_OF_MASS_TRANSFER: SELECT CASE(SPECIES_BC_INDEX)
          MFT = MFT + B1%M_DOT_G_PP_ADJUST(N)
       ENDDO SUM_MASSFLUX_LOOP
 
+      ! MLR-based HRR calculation: accumulate MLR contribution from this surface
+      ! MLR can come from either MASS_FLUX (pyrolysis) or HRRPUA (prescribed burner)
+      IF (MLR_BASED_HRR) THEN
+         ! First try to get MLR from mass flux (pyrolysis)
+         B1%MLR_CONTRIBUTION = SUM(B1%M_DOT_G_PP_ACTUAL(1:N_TRACKED_SPECIES)) * B1%AREA
+
+         ! If no mass flux but HRRPUA is specified, compute MLR from HRRPUA
+         IF (B1%MLR_CONTRIBUTION <= TWO_EPSILON_EB .AND. SF%N_QDOTPP_REF > 0) THEN
+            ! HRRPUA is specified - compute MLR from HRR = MLR * H_c
+            ! MLR = HRR / H_c = (HRRPUA * AREA) / H_c
+            IF (N_REACTIONS > 0 .AND. REACTION(1)%HEAT_OF_COMBUSTION > TWO_EPSILON_EB) THEN
+               HRR_TOTAL = SF%HRRPUA * B1%AREA  ! HRR in W
+               IF (TWO_D) HRR_TOTAL = HRR_TOTAL / DY(BC%JJG)
+               IF (CYLINDRICAL) HRR_TOTAL = HRR_TOTAL * 2._EB * PI
+               B1%MLR_CONTRIBUTION = HRR_TOTAL / REACTION(1)%HEAT_OF_COMBUSTION
+            ENDIF
+         ENDIF
+
+         IF (TWO_D) B1%MLR_CONTRIBUTION = B1%MLR_CONTRIBUTION / DY(BC%JJG)
+         IF (CYLINDRICAL) B1%MLR_CONTRIBUTION = B1%MLR_CONTRIBUTION * 2._EB * PI
+      ENDIF
+
       ! Apply user-specified mass flux variation
 
       IF (SF%MASS_FLUX_VAR > TWO_EPSILON_EB) THEN
@@ -1336,9 +1636,9 @@ END SUBROUTINE CALCULATE_ZZ_F
 
 SUBROUTINE DEPOSIT_PARTICLE_MASS(LP,LPC)
 
-USE PHYSICAL_FUNCTIONS, ONLY: SURFACE_DENSITY,GET_SPECIFIC_HEAT,GET_SENSIBLE_ENTHALPY
+USE PHYSICAL_FUNCTIONS, ONLY: SURFACE_DENSITY,GET_SPECIFIC_HEAT,GET_SENSIBLE_ENTHALPY,GET_SPECIFIC_GAS_CONSTANT
 USE OUTPUT_DATA, ONLY: M_DOT,Q_DOT
-REAL(EB) :: RADIUS,M_DOT_SINGLE,CP,MW_RATIO,H_G,ZZ_GET(1:N_TRACKED_SPECIES),M_GAS,LENGTH,WIDTH,H_S_B
+REAL(EB) :: RADIUS,M_DOT_SINGLE,CP,MW_RATIO,H_G,ZZ_GET(1:N_TRACKED_SPECIES),M_GAS,LENGTH,WIDTH,H_S_B,RSUM_G
 INTEGER :: NS
 TYPE(BOUNDARY_ONE_D_TYPE), POINTER :: ONE_D
 TYPE(LAGRANGIAN_PARTICLE_TYPE), POINTER :: LP
@@ -1380,9 +1680,10 @@ END SELECT
 ! Add evaporated particle species to gas phase and compute resulting contribution to the divergence
 
 M_GAS = B1%RHO_G/LP%RVC
+CALL GET_SPECIFIC_GAS_CONSTANT(B1%ZZ_G(1:N_TRACKED_SPECIES),RSUM_G)
 DO NS=1,N_TRACKED_SPECIES
    IF (ABS(B1%M_DOT_G_PP_ADJUST(NS))<=TWO_EPSILON_EB) CYCLE
-   MW_RATIO = SPECIES_MIXTURE(NS)%RCON/RSUM(BC%IIG,BC%JJG,BC%KKG)
+   MW_RATIO = SPECIES_MIXTURE(NS)%RCON/RSUM_G
    M_DOT_SINGLE = LP%PWT*B1%M_DOT_G_PP_ADJUST(NS)*B1%AREA
    !$OMP CRITICAL
    D_SOURCE(BC%IIG,BC%JJG,BC%KKG) = D_SOURCE(BC%IIG,BC%JJG,BC%KKG) + M_DOT_SINGLE*(MW_RATIO/M_GAS)
@@ -2855,7 +3156,7 @@ REAL(EB), PARAMETER :: M_DOT_ERROR_TOL=1.E-6_EB, CHAR_DENSITY_THRESHOLD=5._EB ! 
 ! Get surface oxygen mass fraction
 
 IF (O2_INDEX>0) THEN
-   ZZ_GET(1:N_TRACKED_SPECIES) = MAX(0._EB,ZZ(BC%IIG,BC%JJG,BC%KKG,1:N_TRACKED_SPECIES))
+   ZZ_GET(1:N_TRACKED_SPECIES) = MAX(0._EB,B1%ZZ_G(1:N_TRACKED_SPECIES))
    CALL GET_MASS_FRACTION(ZZ_GET,O2_INDEX,Y_O2_F)
 ELSE
    Y_O2_F = 0._EB
@@ -3345,7 +3646,7 @@ MATERIAL_LOOP: DO N=1,N_MATS  ! Loop over all materials in the cell (alpha subsc
             ! Estimate surface oxygen concentration from mass transport
             TMP_FILM = (TMP_F+TMP(IIG,JJG,KKG))/2._EB
             ! Get oxygen mass fraction
-            ZZ_GET(1:N_TRACKED_SPECIES) = MAX(0._EB,ZZ(IIG,JJG,KKG,1:N_TRACKED_SPECIES))
+            ZZ_GET(1:N_TRACKED_SPECIES) = MAX(0._EB,B1%ZZ_G(1:N_TRACKED_SPECIES))
             CALL GET_MASS_FRACTION(ZZ_GET,O2_INDEX,Y_O2)
             CALL GET_SPECIFIC_HEAT(ZZ_GET,CP_FILM,TMP_FILM)
             ! Mass transfer coefficient

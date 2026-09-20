@@ -60,15 +60,17 @@ ENDIF
 IF (PREDICTOR) DT_RESTRICT_COUNT = 0
 
 ! Species face values
+! Precomputation on interior+first-ghost cells only (0:IBP1);
+! outermost ghost shell (-1, IBP1+1) is filled later by WALL_BOUNDARY_CORRECTION.
 
 SPECIES_LOOP: DO N=1,N_TOTAL_SCALARS
 
    RHO_Z_P=>WORK_PAD
 
    !$OMP PARALLEL DO
-   DO K=-1,KBP1+1
-      DO J=-1,JBP1+1
-         DO I=-1,IBP1+1
+   DO K=0,KBP1
+      DO J=0,JBP1
+         DO I=0,IBP1
             RHO_Z_P(I,J,K) = RHOP(I,J,K)*ZZP(I,J,K,N)
          ENDDO
       ENDDO
@@ -189,9 +191,9 @@ FACE_CORRECTION_IF: IF (FLUX_LIMITER_MW_CORRECTION) THEN
    RHO_RMW=>WORK_PAD
 
    !$OMP PARALLEL DO PRIVATE(ZZ_GET,MW_G) SCHEDULE(STATIC)
-   DO K=-1,KBP1+1
-      DO J=-1,JBP1+1
-         DO I=-1,IBP1+1
+   DO K=0,KBP1
+      DO J=0,JBP1
+         DO I=0,IBP1
             ZZ_GET(1:N_TRACKED_SPECIES) = ZZP(I,J,K,1:N_TRACKED_SPECIES)
             CALL GET_MOLECULAR_WEIGHT(ZZ_GET,MW_G)
             RHO_RMW(I,J,K) = RHOP(I,J,K)/MW_G

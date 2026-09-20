@@ -4769,9 +4769,11 @@ DO K=K1,K2
             CASE(0)
                M%CELL(IC)%SOLID   = .FALSE.
                M%CELL(IC)%OBST_INDEX = 0
+               IF (ALLOCATED(M%SOLID_CELL)) M%SOLID_CELL(I,J,K) = .FALSE.
             CASE(1)
                M%CELL(IC)%SOLID   = .TRUE.
                M%CELL(IC)%OBST_INDEX = OBST_INDEX
+               IF (ALLOCATED(M%SOLID_CELL)) M%SOLID_CELL(I,J,K) = .TRUE.
          END SELECT
          IF (OBST_INDEX==0) M%CELL(IC)%EXTERIOR = .TRUE.
       ENDDO
@@ -5251,6 +5253,7 @@ END SUBROUTINE GET_WALL_NODE_WEIGHTS
 
 !> \brief Determine weighting factors for 1-D solid cells
 !> \param GEOMETRY Indicator of surface geometry: Cartesian, cylindrical, or spherical
+!> \param I_GRAD Integer denoting exponent for geometry calculations: Cartesian=1, cylindrical=2, or spherical=3
 !> \param NWP Number of interior cells
 !> \param NWP_NEW Number of interior cells after shrinkage or swelling
 !> \param INNER_RADIUS Inner radius of hollow cylinder or sphere (m)

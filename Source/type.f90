@@ -89,7 +89,7 @@ TYPE LAGRANGIAN_PARTICLE_CLASS_TYPE
    REAL(EB) :: INITIAL_MASS=-1._EB        !< Initial mass of single particle (kg)
    REAL(EB) :: FTPR                       !< 4/3 * PI * SPECIES(N)\%DENSITY_LIQUID (kg/m3)
    REAL(EB) :: FREE_AREA_FRACTION         !< Area fraction of cell open for flow in SCREEN_DRAG model
-   REAL(EB) :: POROUS_VOLUME_FRACTION     !< Volume fraction of cell open to flow in porous media model
+   REAL(EB) :: POROUS_VOLUME_FRACTION     !< Volume fraction of cell occupied by porous media in the porous media model
    REAL(EB) :: MEAN_DROPLET_VOLUME=0._EB  !< Mean droplet volume
    REAL(EB) :: RUNNING_AVERAGE_FACTOR     !< Fraction of older value to use for particle statistics summations
    REAL(EB) :: SHAPE_FACTOR               !< Ratio of particle cross sectional area to surface area
@@ -336,6 +336,9 @@ TYPE BOUNDARY_PROP1_TYPE
    REAL(EB) :: M_DOT_PART_ACTUAL     !< Mass flux of all particles (kg/m2/s)
    REAL(EB) :: Q_LEAK=0._EB          !< Heat production of leaking gas (W/m3)
    REAL(EB) :: VEL_ERR_NEW=0._EB     !< Velocity mismatch at mesh or solid boundary (m/s)
+
+   ! MLR-based HRR calculation
+   REAL(EB) :: MLR_CONTRIBUTION=0._EB !< Contribution of this surface to cell MLR (kg/s)
 
    LOGICAL :: BURNAWAY=.FALSE.       !< Indicater if cell can burn away when fuel is exhausted
    LOGICAL :: LAYER_REMOVED=.FALSE.  !< Indicator that at least one layer has been removed during the time step
@@ -687,6 +690,7 @@ TYPE REACTION_TYPE
    REAL(EB) :: H                            !< Number of hydrogen atoms in the fuel molecule (SIMPLE_CHEMISTRY)
    REAL(EB) :: N                            !< Number of nitrogen atoms in the fuel molecule (SIMPLE_CHEMISTRY)
    REAL(EB) :: O                            !< Number of oxygen atoms in the fuel molecule (SIMPLE_CHEMISTRY)
+   REAL(EB) :: CL                           !< Number of chlorine atoms in the fuel molecule (SIMPLE_CHEMISTRY)
    REAL(EB) :: EPUMO2                       !< Energy Per Unit Mass Oxygen consumed (J/kg)
    REAL(EB) :: HEAT_OF_COMBUSTION           !< Energy per unit mass fuel consumed (J/kg)
    REAL(EB) :: HOC_COMPLETE                 !< Complete heat of combustion for two step SIMPLE_CHEMISTRY (J/kg)
@@ -701,6 +705,7 @@ TYPE REACTION_TYPE
    REAL(EB) :: SOOT_YIELD                   !< Soot yield in SIMPLE_CHEMISTRY model
    REAL(EB) :: H2_YIELD                     !< H2 yield in SIMPLE_CHEMISTRY model
    REAL(EB) :: HCN_YIELD                    !< HCN yield in SIMPLE_CHEMISTRY model
+   REAL(EB) :: HCL_YIELD                    !< HCl yield in SIMPLE_CHEMISTRY model
    REAL(EB) :: FUEL_C_TO_CO_FRACTION        !< For 2-step simple chemistry, fuel C that goes to CO instead of C
    REAL(EB) :: FUEL_H_TO_H2_FRACTION        !< For 2-step simple chemistry, fuel H that goes to H2 instead of H2O
    REAL(EB) :: FUEL_N_TO_HCN_FRACTION       !< For 2-step simple chemistry fuel N that goes to HCN instead of N2
@@ -712,12 +717,14 @@ TYPE REACTION_TYPE
    REAL(EB) :: NU_H2O=0._EB                 !< Water coefficient in SIMPLE_CHEMISTRY model
    REAL(EB) :: NU_H2=0._EB                  !< Hydrogen coefficient in SIMPLE_CHEMISTRY model
    REAL(EB) :: NU_HCN=0._EB                 !< Hydrogen cyanide coefficient in SIMPLE_CHEMISTRY model
+   REAL(EB) :: NU_HCL=0._EB                 !< Hydrogen chloride coefficient in SIMPLE_CHEMISTRY model
    REAL(EB) :: NU_CO2=0._EB                 !< Carbon dioxide coefficient in SIMPLE_CHEMISTRY model
    REAL(EB) :: NU_CO=0._EB                  !< Carbon monoxide coefficient in SIMPLE_CHEMISTRY model
    REAL(EB) :: NU_SOOT=0._EB                !< Soot coefficient in SIMPLE_CHEMISTRY model
    REAL(EB) :: S=0._EB                      !< Stoichiometric coefficient for MIXTURE FRACTION output
    REAL(EB) :: N_T=0._EB                    !< Temperature exponent in reaction expression
    REAL(EB) :: CHI_R                        !< Radiative fraction
+   REAL(EB) :: CCC_FIXED=-1._EB             !< Fixed Combustion Completeness Coefficient (0-1). If < 0, calculated from ZETA and CHI_R
    REAL(EB) :: C0_EXP=0._EB                 !< Exponent for C0 factor in reverse equilibirium constant
    REAL(EB) :: NU_FUEL_0                    !< Original fuel NU needed for G_F calculations
    REAL(EB), ALLOCATABLE, DIMENSION(:) :: NU              !< Array of stoichiometric coefficients for lumped species equation
@@ -768,6 +775,15 @@ TYPE REACTION_TYPE
    REAL(EB) :: RT1_TROE                     !< TROE reaction 1/T1
    REAL(EB) :: T2_TROE                      !< TROE reaction T2
    REAL(EB) :: RT3_TROE                     !< TROE reaction 1/T3
+
+   ! FDS5 flame speed model (for INFINITELY_FAST chemistry using FLAME_SPEED_FACTOR)
+   CHARACTER(LABEL_LENGTH) :: RAMP_FS       !< Name of ramp for laminar flame speed vs equivalence ratio
+   REAL(EB) :: FLAME_SPEED=-1._EB           !< Laminar flame speed at reference temperature (m/s); <0 means use default
+   REAL(EB) :: FLAME_SPEED_EXPONENT=0._EB   !< Temperature exponent for flame speed: S_L ~ (T/T_ref)^n
+   REAL(EB) :: FLAME_SPEED_TEMPERATURE=-1._EB !< Reference temperature for flame speed scaling (K)
+   REAL(EB) :: TURBULENT_FLAME_SPEED_ALPHA=1._EB   !< Turbulent flame speed coefficient: S_T/S_L = 1 + alpha*(u'/S_L)^beta
+   REAL(EB) :: TURBULENT_FLAME_SPEED_EXPONENT=2._EB !< Turbulent flame speed exponent
+   INTEGER :: RAMP_FS_INDEX=0               !< Index of laminar flame speed ramp
 
 END TYPE REACTION_TYPE
 
@@ -998,6 +1014,7 @@ TYPE SURFACE_TYPE
    LOGICAL :: INERT_Q_REF                            !< Treat REFERENCE_HEAT_FLUX as an inert atmosphere test
    LOGICAL :: ALLOW_UNDERSIDE_PARTICLES=.FALSE.      !< Allow droplets to move along downward facing surfaces
    LOGICAL :: ALLOW_SURFACE_PARTICLES=.TRUE.         !< Allow particles to live on a solid surface
+   LOGICAL :: SKIP_INRAD = .FALSE.                   !< Only apply external flux to a surface
    INTEGER :: GEOMETRY,BACKING,PROFILE,HEAT_TRANSFER_MODEL=0,NEAR_WALL_TURB_MODEL=5
    CHARACTER(LABEL_LENGTH) :: PART_ID
    CHARACTER(LABEL_LENGTH) :: ID,TEXTURE_MAP,LEAK_PATH_ID(2)

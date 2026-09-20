@@ -1,0 +1,232 @@
+# Makefile for Fire Dynamics Simulator 5.5.3 (FDS5)
+
+# To use this makefile, select the appropriate compiler and OS from the list below.
+# For example, to compile the parallel version (MPI) of FDS5 under Windows using Intel compilers:
+#
+# make fds5_impi_intel_win
+
+# The variable VPATH defines where the source code is relative to the current directory
+# VPATH is set by the bat script (e.g., VPATH="../../Source/fds5")
+
+ifeq ($(shell echo "check_quotes"),"check_quotes")
+# windows
+  GIT_HASH := $(shell ..\Scripts\githash)
+  GIT_STAT := $(shell ..\Scripts\gitstat)
+  GIT_DATE := $(shell ..\Scripts\gitlog)
+  GIT_BRANCH := $(shell ..\Scripts\gitbranch)
+  BUILD_DATE := $(shell powershell -Command "(Get-Date).ToString('ddd-MM/dd/yyyy-hh:mm-tt')")
+else
+# linux/osx
+  SHELL:=/bin/bash
+  GIT_HASH := $(shell git describe --long --abbrev=7)
+  ifeq ("$(shell git diff --shortstat $(VPATH)/*.f90)","")
+    GIT_STAT :=
+  else
+    GIT_STAT := -dirty
+  endif
+  GIT_DATE := $(shell git log -1 --format=%cd)
+  GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
+  BUILD_DATE := $(shell date "+%b %d, %Y  %T")
+endif
+
+GITINFO_BASE=-DGITHASH_PP=\"$(GIT_HASH)$(GIT_STAT)-$(GIT_BRANCH)\" -DGITDATE_PP=\""$(GIT_DATE)\""
+GITINFO=-fpp $(GITINFO_BASE) -DBUILDDATE_PP=\""$(BUILD_DATE)\""
+GITINFOGNU=-cpp $(GITINFO_BASE) -DBUILDDATE_PP=\""$(BUILD_DATE)\""
+
+FFLAGSMKL =
+LFLAGSMKL_INTEL =
+
+ifdef MKLROOT # This assumes the MKL library is available.
+#Set MKLLIBDIR
+MKL_DIR_UNIX  := $(subst \,/,$(MKLROOT))
+MKL_DIR_INTEL := $(MKL_DIR_UNIX)/lib/intel64
+MKL_DIR_BASE  := $(MKL_DIR_UNIX)/lib
+MKL_BLA_LIB   := mkl_blacs_intelmpi_lp64
+MKL_BLA_PATH_A := "$(MKL_DIR_INTEL)/lib$(MKL_BLA_LIB).a"
+MKL_BLA_PATH_LIB := "$(MKL_DIR_INTEL)/$(MKL_BLA_LIB).lib"
+ifneq (,$(wildcard $(MKL_BLA_PATH_A) $(MKL_BLA_PATH_LIB)))
+    MKLLIBDIR := $(MKL_DIR_INTEL)
+else
+    MKLLIBDIR := $(MKL_DIR_BASE)
+endif
+$(info MKLLIBDIR = $(MKLLIBDIR))
+
+ifeq ($(shell echo "check_quotes"),"check_quotes")
+  # windows
+  FFLAGSMKL = -DWITH_MKL /I"$(MKLROOT)\include"
+  LFLAGSMKL_INTEL = "$(MKLLIBDIR)\mkl_intel_lp64.lib" "$(MKLLIBDIR)\mkl_core.lib" "$(MKLLIBDIR)\mkl_sequential.lib"
+else
+# linux
+  FFLAGSMKL = -DWITH_MKL -I$(MKLROOT)/include
+  LFLAGSMKL_INTEL = -Wl,--start-group ${MKLLIBDIR}/libmkl_intel_lp64.a ${MKLLIBDIR}/libmkl_core.a ${MKLLIBDIR}/libmkl_sequential.a -Wl,--end-group -lpthread -lm -ldl
+ endif
+endif
+
+# FDS5 object files - compilation order matters for module dependencies!
+# prec -> cons -> type -> mesh -> func (base modules, no cross-deps)
+# irad -> radi (radi uses RADCONS, MIEV from irad)
+# ieva -> evac (evac uses STAT, DCDFLIB from ieva)
+# scrc must be before dump, pres, read (all use SCARC_SOLVER)
+# smvv must be before dump (dump uses isodefs from smvv)
+# pois must be before pres (pres uses POIS)
+# pois must be before turb (turb PROJECT_VELOCITY uses POIS H3CZSS/H2CZSS)
+# ctrl must be before evac, hvac, read (all use CONTROL_FUNCTIONS)
+# NOTE: For MPI build use mpip.obj, for serial build use mpis.obj (not both!)
+# isob.obj provides C functions (smoke3dtofile, isoheader, etc.) needed by dump.obj
+
+obj_mpi5 = prec.obj cons.obj type.obj mesh.obj func.obj pois.obj turb.obj irad.obj radi.obj \
+           scrc.obj smvv.obj mpip.obj isob.obj devc.obj cut_face.obj \
+           part.obj vege.obj ctrl.obj ieva.obj evac.obj hvac.obj \
+           mass.obj wall.obj fire.obj velo.obj pres.obj \
+           init.obj dump.obj read.obj divg.obj main.obj
+
+obj_mpi5_unix = $(obj_mpi5:.obj=.o)
+
+# General Purpose Rules
+
+no_target:
+	@echo \******** You did not specify a make target \********
+	@echo Please read the comments at the top of the makefile
+
+setup:
+%.o : %.mod
+
+setup_win:
+%.obj : %.mod
+
+.SUFFIXES: .f90 .c .o .obj
+
+.f90.o:
+	$(FCOMPL) -c $(FFLAGS) $<
+.f90.obj:
+	$(FCOMPL) -c $(FFLAGS) $<
+.c.o:
+	$(CCOMPL) -c $(CFLAGS) $<
+.c.obj:
+	$(CCOMPL) -c $(CFLAGS) $<
+
+# Files which have OpenMP compiler directives
+divg.obj: FFLAGS += $(FOPENMPFLAGS)
+func.obj: FFLAGS += $(FOPENMPFLAGS)
+mass.obj: FFLAGS += $(FOPENMPFLAGS)
+pres.obj: FFLAGS += $(FOPENMPFLAGS)
+turb.obj: FFLAGS += $(FOPENMPFLAGS)
+velo.obj: FFLAGS += $(FOPENMPFLAGS)
+radi.obj: FFLAGS += $(FOPENMPFLAGS)
+wall.obj: FFLAGS += $(FOPENMPFLAGS)
+main.obj: FFLAGS += $(FOPENMPFLAGS)
+
+divg.o: FFLAGS += $(FOPENMPFLAGS)
+func.o: FFLAGS += $(FOPENMPFLAGS)
+mass.o: FFLAGS += $(FOPENMPFLAGS)
+pres.o: FFLAGS += $(FOPENMPFLAGS)
+turb.o: FFLAGS += $(FOPENMPFLAGS)
+velo.o: FFLAGS += $(FOPENMPFLAGS)
+radi.o: FFLAGS += $(FOPENMPFLAGS)
+wall.o: FFLAGS += $(FOPENMPFLAGS)
+main.o: FFLAGS += $(FOPENMPFLAGS)
+
+# Windows Intel Fortran Compiler and Intel MPI
+
+fds5_impi_intel_win : MPILIB = "$(I_MPI_ROOT)\lib\impi.lib"
+fds5_impi_intel_win : MPIINCLUDE = "$(I_MPI_ROOT)\include\mpi"
+fds5_impi_intel_win : FFLAGS = -D_WIN32 /Qipo /O2 /I$(MPIINCLUDE) /wrap-margin- $(GITINFO) $(FFLAGSMKL)
+fds5_impi_intel_win : FCOMPL = ifx
+fds5_impi_intel_win : CCOMPL = icx
+fds5_impi_intel_win : CFLAGS = -D_WIN32 -Dpp_noappend /O2 $(GITINFO)
+fds5_impi_intel_win : obj = fds5_impi_intel_win
+fds5_impi_intel_win : setup_win $(obj_mpi5)
+	$(FCOMPL) -o $(obj).exe $(FFLAGS) /F1000000000 $(obj_mpi5) $(MPILIB) $(LFLAGSMKL_INTEL)
+
+fds5_impi_intel_win_db : MPILIB = "$(I_MPI_ROOT)\lib\impi.lib"
+fds5_impi_intel_win_db : MPIINCLUDE = "$(I_MPI_ROOT)\include\mpi"
+fds5_impi_intel_win_db : FFLAGS = -D_WIN32 /Od /nologo /debug:all /I$(MPIINCLUDE) /Z7 /extend-source:132 /warn:unused /traceback /check:all /wrap-margin- $(GITINFO) $(FFLAGSMKL)
+fds5_impi_intel_win_db : FCOMPL = ifx
+fds5_impi_intel_win_db : CCOMPL = icx
+fds5_impi_intel_win_db : CFLAGS = -D_WIN32 -Dpp_noappend /Od /Z7 /nologo $(GITINFO)
+fds5_impi_intel_win_db : obj = fds5_impi_intel_win_db
+fds5_impi_intel_win_db : setup_win $(obj_mpi5)
+	$(FCOMPL) -o $(obj).exe $(FFLAGS) /F1000000000 $(obj_mpi5) $(MPILIB) $(LFLAGSMKL_INTEL)
+
+# Linux Intel Fortran Compiler and Intel MPI
+
+fds5_impi_intel_linux : FFLAGS = -O2 -ipo -no-wrap-margin $(GITINFO) $(FFLAGSMKL) -DUSE_IFPORT
+fds5_impi_intel_linux : LFLAGSMKL = $(LFLAGSMKL_INTEL)
+fds5_impi_intel_linux : FCOMPL = $(COMP_FC)
+fds5_impi_intel_linux : obj = fds5_impi_intel_linux
+fds5_impi_intel_linux : setup $(obj_mpi5_unix)
+	$(FCOMPL) $(FFLAGS) -o $(obj) $(obj_mpi5_unix) $(LFLAGSMKL)
+
+# *** Object Dependencies ***
+
+prec.obj :
+prec.o :
+cons.obj : prec.obj
+cons.o : prec.o
+type.obj : prec.obj cons.obj
+type.o : prec.o cons.o
+mesh.obj : prec.obj type.obj
+mesh.o : prec.o type.o
+func.obj : prec.obj cons.obj type.obj mesh.obj devc.obj
+func.o : prec.o cons.o type.o mesh.o devc.o
+turb.obj : prec.obj func.obj cons.obj mesh.obj pois.obj
+turb.o : prec.o func.o cons.o mesh.o pois.o
+pois.obj : prec.obj cons.obj
+pois.o : prec.o cons.o
+irad.obj : prec.obj cons.obj
+irad.o : prec.o cons.o
+radi.obj : func.obj prec.obj cons.obj type.obj mesh.obj irad.obj
+radi.o : func.o prec.o cons.o type.o mesh.o irad.o
+part.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj
+part.o : func.o prec.o cons.o type.o mesh.o devc.o
+vege.obj : func.obj prec.obj cons.obj type.obj mesh.obj
+vege.o : func.o prec.o cons.o type.o mesh.o
+ctrl.obj : prec.obj cons.obj type.obj mesh.obj func.obj
+ctrl.o : prec.o cons.o type.o mesh.o func.o
+evac.obj : func.obj prec.obj cons.obj type.obj mesh.obj ctrl.obj ieva.obj
+evac.o : func.o prec.o cons.o type.o mesh.o ctrl.o ieva.o
+ieva.obj : func.obj prec.obj cons.obj type.obj mesh.obj
+ieva.o : func.o prec.o cons.o type.o mesh.o
+hvac.obj : func.obj prec.obj cons.obj type.obj mesh.obj ctrl.obj
+hvac.o : func.o prec.o cons.o type.o mesh.o ctrl.o
+mass.obj : func.obj prec.obj cons.obj type.obj mesh.obj turb.obj
+mass.o : func.o prec.o cons.o type.o mesh.o turb.o
+wall.obj : func.obj prec.obj cons.obj type.obj mesh.obj hvac.obj mass.obj
+wall.o : func.o prec.o cons.o type.o mesh.o hvac.o mass.o
+fire.obj : func.obj prec.obj cons.obj type.obj mesh.obj mass.obj radi.obj
+fire.o : func.o prec.o cons.o type.o mesh.o mass.o radi.o
+velo.obj : func.obj prec.obj cons.obj type.obj mesh.obj turb.obj cut_face.obj
+velo.o : func.o prec.o cons.o type.o mesh.o turb.o cut_face.o
+pres.obj : func.obj prec.obj cons.obj type.obj mesh.obj pois.obj velo.obj scrc.obj
+pres.o : func.o prec.o cons.o type.o mesh.o pois.o velo.o scrc.o
+init.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj radi.obj pois.obj pres.obj cut_face.obj
+init.o : func.o prec.o cons.o type.o mesh.o devc.o radi.o pois.o pres.o cut_face.o
+dump.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj smvv.obj turb.obj radi.obj scrc.obj fire.obj
+dump.o : func.o prec.o cons.o type.o mesh.o devc.o smvv.o turb.o radi.o scrc.o fire.o
+read.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj ctrl.obj radi.obj hvac.obj scrc.obj mass.obj
+read.o : func.o prec.o cons.o type.o mesh.o devc.o ctrl.o radi.o hvac.o scrc.o mass.o
+divg.obj : func.obj prec.obj cons.obj type.obj mesh.obj mass.obj cut_face.obj
+divg.o : func.o prec.o cons.o type.o mesh.o mass.o cut_face.o
+main.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj smvv.obj mass.obj divg.obj velo.obj wall.obj fire.obj radi.obj part.obj vege.obj dump.obj read.obj init.obj pres.obj pois.obj ctrl.obj turb.obj hvac.obj evac.obj ieva.obj scrc.obj mpip.obj
+main.o : func.o prec.o cons.o type.o mesh.o devc.o smvv.o mass.o divg.o velo.o wall.o fire.o radi.o part.o vege.o dump.o read.o init.o pres.o pois.o ctrl.o turb.o hvac.o evac.o ieva.o scrc.o mpip.o
+scrc.obj : func.obj prec.obj cons.obj type.obj mesh.obj pois.obj
+scrc.o : func.o prec.o cons.o type.o mesh.o pois.o
+smvv.obj : func.obj prec.obj cons.obj
+smvv.o : func.o prec.o cons.o
+mpip.obj : prec.obj cons.obj mesh.obj
+mpip.o : prec.o cons.o mesh.o
+mpis.obj : prec.obj cons.obj mesh.obj
+mpis.o : prec.o cons.o mesh.o
+devc.obj : prec.obj
+devc.o : prec.o
+cut_face.obj : prec.obj cons.obj type.obj mesh.obj
+cut_face.o : prec.o cons.o type.o mesh.o
+isob.obj :
+isob.o :
+
+clean:
+ifeq ($(shell echo "check_quotes"),"check_quotes")
+	del *.obj *.mod *.exe
+else
+	rm -f *.o *.mod
+endif

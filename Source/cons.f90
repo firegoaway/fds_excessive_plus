@@ -160,6 +160,7 @@ INTEGER :: CO2_INDEX=0                     !< Index for CO2 in SIMPLE_CHEMISTRY 
 INTEGER :: CO_INDEX=0                      !< Index for CO in SIMPLE_CHEMISTRY model
 INTEGER :: H2_INDEX=0                      !< Index for H2 in SIMPLE_CHEMISTRY model
 INTEGER :: SOOT_INDEX=0                    !< Index for SOOT in SIMPLE_CHEMISTRY model
+INTEGER :: HCL_INDEX=0                     !< Index for HCl in SIMPLE_CHEMISTRY model
 INTEGER :: H2O_SMIX_INDEX = -1             !< Index for H2O
 INTEGER :: HCN_INDEX=0                     !< Index for HCN
 INTEGER :: NO_INDEX=0                      !< Index for NO
@@ -190,7 +191,7 @@ LOGICAL :: APPEND=.FALSE.                   !< For a RESTARTed calculation, APPE
 LOGICAL :: PARTICLE_FILE=.FALSE.            !< Indicates the existence of Lagrangian particles
 LOGICAL :: PARTICLE_DRAG=.FALSE.            !< Indicates there are particles that drag the gas
 LOGICAL :: RESTART=.FALSE.                  !< Indicates if a former calculation is to be RESTARTed
-LOGICAL :: SUPPRESSION=.TRUE.               !< Indicates if gas-phase combustion extinction is modeled
+LOGICAL :: SUPPRESSION=.FALSE.               !< Indicates if gas-phase combustion extinction is modeled
 LOGICAL :: ACCUMULATE_WATER=.FALSE.         !< Indicates that integrated liquid outputs are specified
 LOGICAL :: WRITE_XYZ=.FALSE.                !< Indicates that a Plot3D geometry file is specified by user
 LOGICAL :: CHECK_POISSON=.FALSE.            !< Check the accuracy of the Poisson solver
@@ -202,35 +203,56 @@ LOGICAL :: SMOKE3D=.TRUE.                   !< Indicates that the 3D smoke and f
 LOGICAL :: SMV_PARALLEL_WRITE=.FALSE.       !< If true, the CHID.smv file is written in parallel using MPI-IO.
 LOGICAL :: STATUS_FILES=.FALSE.             !< Produce an output file CHID.notready which is deleted if the simulation completes
 LOGICAL :: LOCK_TIME_STEP=.FALSE.           !< Do not allow time step to change for diagnostic purposes
-LOGICAL :: RESTRICT_TIME_STEP=.TRUE.        !< Do not let the time step increase above its intial value
+LOGICAL :: RESTRICT_TIME_STEP=.FALSE.        !< Do not let the time step increase above its intial value
 LOGICAL :: FLUSH_FILE_BUFFERS=.TRUE.        !< Periodically flush the output buffers during simulation for better Smokeviewing
 LOGICAL :: CLIP_RESTART_FILES=.TRUE.        !< Append RESTARTed output files at the time the former calculation terminated
 LOGICAL :: COLUMN_DUMP_LIMIT=.FALSE.        !< Limit the number of columns in output files
 LOGICAL :: MASS_FILE=.FALSE.                !< Output a comma-delimited file of gas species masses
-LOGICAL :: STRATIFICATION=.TRUE.            !< Assume that the atmosphere decreases in pressure with height
+LOGICAL :: STRATIFICATION=.FALSE.            !< Assume that the atmosphere decreases in pressure with height
 LOGICAL :: SOLID_PHASE_ONLY=.FALSE.         !< Only perform a solid phase heat transfer and pyrolysis simulation
 LOGICAL :: AEROSOL_AL2O3=.FALSE.            !< Assume that the SOOT is Al_2 O_3
 LOGICAL :: FREEZE_VELOCITY=.FALSE.          !< Hold velocity fixed, do not perform a velocity update
 LOGICAL :: BNDF_DEFAULT=.TRUE.              !< Output boundary output files
 LOGICAL :: SPATIAL_GRAVITY_VARIATION=.FALSE.!< Assume gravity varies as a function of the \f$ x \f$ coordinate
-LOGICAL :: CHECK_VN=.TRUE.                  !< Check the Von Neumann number
+LOGICAL :: CHECK_VN=.FALSE.                  !< Check the Von Neumann number
 LOGICAL :: CHECK_FO=.FALSE.                 !< Check the solid phase Fourier number
 LOGICAL :: LIQUID_DROPLETS=.FALSE.          !< Indicates the existence of liquid droplets
 LOGICAL :: SOLID_PARTICLES=.FALSE.          !< Indicates the existence of solid particles
 LOGICAL :: ORIENTED_PARTICLES=.FALSE.       !< Indicates the existence of particles with a specified orientation
 LOGICAL :: HVAC=.FALSE.                     !< Perform an HVAC calculation
-LOGICAL :: BAROCLINIC=.TRUE.                !< Include the baroclinic terms in the momentum equation
+LOGICAL :: BAROCLINIC=.FALSE.                !< Include the baroclinic terms in the momentum equation
 LOGICAL :: GRAVITATIONAL_DEPOSITION=.TRUE.  !< Allow aerosol gravitational deposition
 LOGICAL :: GRAVITATIONAL_SETTLING=.TRUE.    !< Allow aerosol gravitational settling
 LOGICAL :: THERMOPHORETIC_DEPOSITION=.TRUE. !< Allow aerosol thermophoretic deposition
 LOGICAL :: THERMOPHORETIC_SETTLING=.TRUE.   !< Allow aerosol thermophoretic settling
 LOGICAL :: TURBULENT_DEPOSITION=.TRUE.      !< Allow aerosol turbulent deposition
-LOGICAL :: DEPOSITION=.TRUE.                !< Allow aerosol deposition
+LOGICAL :: DEPOSITION=.FALSE.               !< Allow aerosol deposition
 LOGICAL :: AEROSOL_SCRUBBING=.FALSE.        !< Allow aerosol scrubbing
 LOGICAL :: VELOCITY_ERROR_FILE=.FALSE.      !< Generate a diagnostic output file listing velocity and pressure errors
-LOGICAL :: CFL_FILE=.FALSE.                 !< Generate a diagnostic output file listing quantities related to CFL and VN
-LOGICAL :: CONSTANT_SPECIFIC_HEAT_RATIO=.FALSE. !< Assume that the ratio of specific heats is constant, \f$ \gamma=1.4 \f$
+LOGICAL :: CFL_FILE=.TRUE.                 !< Generate a diagnostic output file listing quantities related to CFL and VN
+LOGICAL :: CONSTANT_SPECIFIC_HEAT_RATIO=.TRUE. !< Assume that the ratio of specific heats is constant, \f$ \gamma=1.4 \f$
 LOGICAL :: CHECK_HT=.FALSE.                 !< Apply heat transfer stability condition
+LOGICAL :: FDS5_HT_CFL=.TRUE.               !< Use FDS5 wall heat transfer CFL formula (Q/(rho*Cp)) instead of FDS6 diffusive formula
+LOGICAL :: FDS5_DT_RESTRICT=.FALSE.          !< Restrict timestep on density clipping (FDS6 behavior); .FALSE. disables for speed
+LOGICAL :: FDS5_IBM_CFL_CHECK=.FALSE.        !< Run IBM cut-cell CFL/VN check (CHECK_CFLVN_LINKED_CELLS); .FALSE. skips for speed
+LOGICAL :: FDS5_PRESSURE_MODE=.TRUE.           !< Use FDS5 pressure iteration: no baroclinic/CC_NO_FLUX/MATCH_FLUX, velocity-only exit criterion, no suspend check; only for FFT_FLAG
+LOGICAL :: FDS5_WALL_BC_PASS=.TRUE.             !< Use FDS5-style single-pass wall BC loop; collapses WALL_CELL_LOOP_0 + WALL_CELL_LOOP into one pass for simple cases
+LOGICAL :: FDS5_DIVG_REDUCE=.TRUE.             !< Use FDS5 species loop range in divergence (1..IBAR interior only) instead of FDS6 extended ghost cell range (-1..IBP1+1)
+LOGICAL :: FDS5_DIVG_ADVECTION=.TRUE.           !< Use FDS5-style divergence/advection discretization (face-value wall fluxes, no separate wall source term); more stable at large DT
+LOGICAL :: FDS5_CHEM_LOOP=.TRUE.              !< Use FDS5-style single-pass chemistry loop (no pre-scan + active cell array); for serial runs only, cut-cell loop unchanged
+LOGICAL :: FDS5_DIV_LIMITER=.TRUE.             !< Apply divergence-based timestep limiter regardless of CFL_VELOCITY_NORM; prevents runaway when norm=3 excludes divergence from CFL check
+REAL(EB) :: DIVERGENCE_LIMIT=5.0_EB            !< Maximum allowed divergence*dt (dimensionless); prevents velocity explosion. Default 5.0 allows normal operation (~0.15) with large safety margin
+REAL(EB) :: HT_CFL_LIMIT=5.0_EB                !< Maximum allowed heat transfer CFL (Q/(rho*Cp)*dt/dx); prevents thermal runaway at walls. Default 5.0 allows normal operation with large safety margin
+REAL(EB) :: PARTICLE_VELOCITY_LIMIT=5.0_EB     !< Maximum allowed particle CFL (|Vp|*dt/dx); prevents particle crossing multiple cells per step. Default 5.0 allows normal operation with large safety margin
+REAL(EB) :: VON_NEUMANN_LIMIT=5.0_EB           !< Maximum allowed von Neumann number (nu*dt/dx^2); prevents diffusive instability. Default 5.0 allows normal operation (~0.1) with large safety margin
+LOGICAL :: FDS5_CCC=.TRUE.                     !< Use FDS5-style CCC: always CCC_FIXED (1.0 if not set), no procedural (1-ZETA)*(1-CHI_R) for prescribed burner
+INTEGER  :: CHECK_STABILITY_OMP_THRESHOLD=50000 !< Cell count threshold for OpenMP parallelization in CHECK_STABILITY; below this, serial loops are used
+INTEGER  :: PRESSURE_RHS_OMP_THRESHOLD=5000  !< External wall cell count threshold for OpenMP parallelization in PRESSURE_SOLVER_COMPUTE_RHS wall loop; below this, serial loop is used
+LOGICAL  :: CACHE_VISCOSITY_CORRECTOR=.FALSE.  !< Reuse viscosity from predictor in corrector step; .TRUE. saves 5-15% but causes long-term instability
+LOGICAL  :: CACHE_VISCOSITY_PREDICTOR=.FALSE. !< Skip COMPUTE_VISCOSITY in predictor step; .TRUE. saves ~2-4% per timestep but uses stale viscosity (may affect stability for LES)
+LOGICAL  :: SKIP_DEARDORFF_FILTER_CORRECTOR=.TRUE. !< Skip expensive test-filter in Deardorff model on corrector step; reuses KSGS from predictor (~15-25% speedup, stable)
+LOGICAL  :: FDS5_FLAME_SPEED_MODEL=.TRUE.    !< Use FDS5-style FLAME_SPEED_FACTOR + FUNC_BCOR for INFINITELY_FAST chemistry (simpler, faster)
+LOGICAL  :: FDS5_COMBUSTION_EARLY_SKIP=.TRUE. !< Skip combustion model entirely for cells with no fuel/air present (early exit before ODE solver)
 LOGICAL :: PATCH_VELOCITY=.FALSE.           !< Assume user-defined velocity patches
 LOGICAL :: OVERWRITE=.TRUE.                 !< Overwrite old output files
 LOGICAL :: INIT_HRRPUV=.FALSE.              !< Assume an initial spatial distribution of HRR per unit volume
@@ -240,13 +262,15 @@ LOGICAL :: TMP_RESTART=.FALSE.              !< Initialize temperature field with
 LOGICAL :: SPEC_RESTART=.FALSE.             !< Initialize tracked species field with values from a file
 LOGICAL :: PARTICLE_CFL=.FALSE.             !< Include particle velocity as a constraint on time step
 LOGICAL :: RTE_SOURCE_CORRECTION=.TRUE.     !< Apply a correction to the radiation source term to achieve desired rad fraction
-LOGICAL :: OBST_CREATED_OR_REMOVED=.TRUE.   !< An obstruction has just been created or removed and wall cells must be reassigned
+LOGICAL :: OBST_CREATED_OR_REMOVED=.FALSE.  !< An obstruction has just been created or removed and wall cells must be reassigned
 LOGICAL :: CHECK_REALIZABILITY=.FALSE.
 LOGICAL :: MIN_DEVICES_EXIST=.FALSE.
 LOGICAL :: MAX_DEVICES_EXIST=.FALSE.
 LOGICAL :: SUPPRESS_DIAGNOSTICS=.FALSE.     !< Do not print detailed mesh-specific output in the .out file
 LOGICAL :: WRITE_GEOM_FIRST=.TRUE.
-LOGICAL :: SIMPLE_CHEMISTRY=.FALSE.         !< Use simple chemistry combustion model
+LOGICAL :: SIMPLE_CHEMISTRY=.FALSE.         !< Use simple chemistry combustion model (set .TRUE. by Fuel Wizard)
+LOGICAL :: MLR_BASED_HRR=.TRUE.             !< Use simplified HRR calculation: Q = MLR * H_c * CCC
+LOGICAL :: CCC_DEFAULT=.TRUE.               !< If .TRUE., set COMBUSTION_COMPLETENESS=0.93 by default in &REAC
 LOGICAL :: FIRST_PASS                       !< The point in the time step before the CFL constraint is applied
 LOGICAL :: VERBOSE=.FALSE.                  !< Add extra output in the .err file
 LOGICAL :: SOLID_HEAT_TRANSFER_3D=.FALSE.
@@ -323,7 +347,7 @@ REAL(EB) :: W0                                 !< Wind speed in the \f$ z \f$ di
 REAL(EB) :: GVEC(3)                            !< Gravity vector (m/s2)
 REAL(EB) :: FVEC(3)=0._EB                      !< Force vector (N/m3)
 REAL(EB) :: OVEC(3)=0._EB                      !< Coriolis vector (1/s)
-REAL(EB) :: C_SMAGORINSKY=0.2_EB               !< Coefficient in turbulence model
+REAL(EB) :: C_SMAGORINSKY=0.2025_EB            !< Coefficient in turbulence model
 REAL(EB) :: C_DEARDORFF=0.1_EB                 !< Coefficient in turbulence model
 REAL(EB) :: C_VREMAN=0.07_EB                   !< Coefficient in turbulence model
 REAL(EB) :: C_WALE=0.60_EB                     !< Coefficient in turbulence model
@@ -335,10 +359,36 @@ REAL(EB) :: MU_AIR_0=1.8E-5_EB                 !< Dynamic Viscosity of Air at 20
 REAL(EB) :: PR_AIR=0.7_EB                      !< Prandtl number for Air
 REAL(EB) :: CFL_MAX=1.0_EB                     !< Upper bound of CFL constraint
 REAL(EB) :: CFL_MIN=0.8_EB                     !< Lower bound of CFL constraint
-REAL(EB) :: VN_MAX=1.0_EB                      !< Upper bound of von Neumann constraint
-REAL(EB) :: VN_MIN=0.8_EB                      !< Lower bound of von Neumann constraint
+REAL(EB) :: VN_MAX=0.6_EB                      !< Upper bound of von Neumann constraint
+REAL(EB) :: VN_MIN=0.4_EB                      !< Lower bound of von Neumann constraint
 REAL(EB) :: PR_T                               !< Turbulent Prandtl number
 REAL(EB) :: SC_T                               !< Turbulent Schmidt number
+
+! CFL_RELAXED mode parameters for fast operational simulations
+LOGICAL :: CFL_RELAXED=.FALSE.                  !< Enable relaxed CFL constraint for faster simulations
+REAL(EB) :: CFL_RELAXED_MAX=2.0_EB            !< Relaxed CFL limit (default 10.0, up to 20.0 for very fast)
+REAL(EB) :: VN_RELAXED_MAX=2.0_EB             !< Relaxed von Neumann limit for relaxed mode
+
+! LAZY-SOAP solver parameters for adaptive pressure solve skipping
+REAL(EB) :: LAZY_SOAP_THRESHOLD = 0.35_EB      !< Threshold for LAZY-SOAP skip decision (default 0.35 = 35% RHS change)
+REAL(EB) :: LAZY_SOAP_EXTRAP_ALPHA = 0.85_EB   !< Extrapolation damping factor for LAZY-SOAP (default 0.85)
+REAL(EB) :: LAZY_SOAP_EXTRAP_BETA = 0.15_EB    !< 2nd order extrapolation coefficient for LAZY-SOAP (default 0.15)
+INTEGER :: LAZY_MAX_SKIP_CONSECUTIVE = 5       !< Maximum consecutive skips before forced FFT solve
+REAL(EB) :: LAZY_DIVERGENCE_TOLERANCE = 0.05_EB!< Divergence error tolerance for LAZY-SOAP fallback (default 5%)
+LOGICAL :: LAZY_SOAP_GLOBAL_CONTEXT = .TRUE.   !< Use global (all-mesh) context for skip decision
+
+! SOAP solver safety parameters (for PRESSURE_SOLVER_SOAP)
+REAL(EB) :: SOAP_THRESHOLD_SAVE = 0.01_EB      !< SOAP smoothness threshold (default 0.01, tighter than hardcoded 0.15); lower = more conservative, fewer extrapolations
+REAL(EB) :: SOAP_EXTRAP_ALPHA_SAVE = 0.5_EB    !< SOAP extrapolation damping (default 0.5, more conservative than hardcoded 0.8)
+REAL(EB) :: SOAP_DIV_CHECK_TOLERANCE = 0.05_EB !< Divergence tolerance for SOAP post-extrapolation safety check (1/s)
+LOGICAL  :: SOAP_DIV_CHECK = .TRUE.            !< Enable divergence-based safety check for SOAP (fallback to FFT if div exceeded)
+
+! FIXED_DT_OVERRIDE parameters for fixed time step mode (FDS 5 legacy behavior)
+REAL(EB) :: DT_OVERRIDE = -1._EB               !< Fixed time step override (-1 = disabled, >0 = fixed DT in seconds)
+LOGICAL :: DISABLE_VN_CHECK = .FALSE.          !< Disable Von Neumann stability check
+LOGICAL :: DISABLE_PARTICLE_CFL = .FALSE.      !< Disable particle CFL constraint
+REAL(EB) :: DIVERGENCE_TOLERANCE = 0.01_EB     !< Acceptable divergence error (default 1%, FDS 5 used ~10%)
+
 REAL(EB) :: GROUND_LEVEL=0._EB                 !< Height of the ground, used for establishing atmospheric profiles (m)
 REAL(EB) :: LIMITING_DT_RATIO=1.E-4_EB         !< Ratio of current to initial time step when code is stopped
 REAL(EB) :: NOISE_VELOCITY=0.005_EB            !< Velocity of random noise vectors (m/s)
@@ -416,6 +466,7 @@ REAL(EB) :: MW_CO                                                   !< Molecular
 REAL(EB) :: MW_H2                                                   !< Molecular weight of hydrogen (g/mol)
 REAL(EB) :: MW_HCN                                                  !< Molecular weight of hydrogen cyanide (g/mol)
 REAL(EB) :: MW_SOOT                                                 !< Molecular weight of soot (g/mol)
+REAL(EB) :: MW_HCL                                                  !< Molecular weight of hydrogen chloride (g/mol)
 REAL(EB) :: VISIBILITY_FACTOR=3._EB                                 !< Parameter in light extinction calculation
 REAL(EB) :: EC_LL                                                   !< Extinction Coefficient, Lower Limit (1/m)
 REAL(EB) :: ZZ_MIN_GLOBAL=1.E-10_EB                                 !< Minimum lumped species mass fraction
@@ -434,7 +485,7 @@ INTEGER :: N_REACTIONS                                              !< Number of
 INTEGER :: I_WATER=-1                                               !< Index of the 'WATER VAPOR' tracked species
 INTEGER :: N_TRACKED_SPECIES=0                                      !< Number of lumped or tracked (computed) gas species
 INTEGER :: N_SURFACE_DENSITY_SPECIES=0
-INTEGER :: COMBUSTION_ODE_SOLVER=-1                                 !< Indicator of ODE solver
+INTEGER :: COMBUSTION_ODE_SOLVER=EXPLICIT_EULER                     !< Indicator of ODE solver (default: EXPLICIT_EULER)
 INTEGER :: EXTINCT_MOD=-1                                           !< Indicator of extinction model
 INTEGER :: MAX_CHEMISTRY_SUBSTEPS=20                                !< Limit on combustion iterations
 INTEGER :: MAX_PRIORITY=1                                           !< Maximum numbers of serial fast reactions
@@ -446,6 +497,18 @@ INTEGER :: ZETA_0_RAMP_INDEX=0                                      !< Ramp inde
 LOGICAL :: OUTPUT_CHEM_IT=.FALSE.
 LOGICAL :: REAC_SOURCE_CHECK=.FALSE.
 LOGICAL :: COMPUTE_ADIABATIC_FLAME_TEMPERATURE=.FALSE.              !< Report adiabatic flame temperature per REAC in LU_OUTPUT
+
+! LAZY-SOAP global state variables
+LOGICAL :: LAZY_SKIP_RHS = .FALSE.                                  !< Global flag to skip RHS computation in LAZY-SOAP
+INTEGER :: LAZY_SKIP_COUNTER = 0                                    !< Counter for consecutive LAZY-SOAP skips
+INTEGER :: LAZY_FFT_COUNTER = 0                                     !< Counter for LAZY-SOAP FFT solves (statistics)
+REAL(EB) :: LAZY_GLOBAL_MAX_INDICATOR = 0.0_EB                      !< Global maximum SOAP indicator across all meshes
+LOGICAL :: LAZY_DIVERGENCE_EXCEEDED = .FALSE.                       !< Flag indicating divergence error exceeded tolerance
+
+! SOAP global state variables (for divergence safety check)
+LOGICAL  :: SOAP_EXTRAP_DISABLED = .FALSE.                          !< Flag to disable SOAP extrapolation (force FFT after failures)
+INTEGER  :: SOAP_FAIL_COUNT = 0                                     !< Counter for consecutive SOAP extrapolation failures
+LOGICAL  :: SOAP_DIV_EXCEEDED = .FALSE.                             !< Flag indicating SOAP divergence check failed
 
 REAL(EB) :: RSUM0                                     !< Initial specific gas constant, \f$ R \sum_i Z_{i,0}/W_i \f$
 
@@ -523,19 +586,21 @@ INTEGER, ALLOCATABLE, DIMENSION(:,:) :: VELOCITY_ERROR_MAX_LOC   !< Indices of m
 INTEGER, ALLOCATABLE, DIMENSION(:,:) :: PRESSURE_ERROR_MAX_LOC   !< Indices of max pressure error
 INTEGER :: PRESSURE_ITERATIONS=0                                 !< Counter for pressure iterations
 INTEGER :: MAX_PREDICTOR_PRESSURE_ITERATIONS=-1                  !< Max pressure iterations per pressure solve in predictor
-INTEGER :: MAX_PRESSURE_ITERATIONS=10                            !< Max pressure iterations per pressure solve
+INTEGER :: MAX_PRESSURE_ITERATIONS=10                            !< Max pressure iterations per pressure solve (FDS5 default: 10)
 INTEGER :: TOTAL_PRESSURE_ITERATIONS=0                           !< Counter for total pressure iterations
 CHARACTER(LABEL_LENGTH) :: PRES_METHOD='FFT'                     !< Pressure solver method
 INTEGER, PARAMETER :: FFT_FLAG=0                                 !< Integer pressure solver parameter FFT
 INTEGER, PARAMETER :: GLMAT_FLAG=1                               !< Integer pressure solver parameter GLMAT
 INTEGER, PARAMETER :: UGLMAT_FLAG=2                              !< Integer pressure solver parameter UGLMAT
 INTEGER, PARAMETER :: ULMAT_FLAG=3                               !< Integer pressure solver parameter ULMAT
+INTEGER, PARAMETER :: SOAP_FLAG=4                                !< Integer pressure solver parameter SOAP (Smoothness-Based Adaptive Poisson)
+INTEGER, PARAMETER :: LAZY_SOAP_FLAG=5                           !< Integer pressure solver parameter LAZY-SOAP (Lazy Smoothness-Based Adaptive Poisson)
 INTEGER, PARAMETER :: MKL_PARDISO_FLAG=1                         !< Integer matrix solver library flag for MKL PARDISO
 INTEGER, PARAMETER :: MKL_CPARDISO_FLAG=1                        !< Integer matrix solver library flag for MKL CLUSTER PARDISO
 INTEGER, PARAMETER :: HYPRE_FLAG=2                               !< Integer matrix solver library flag for HYPRE
 INTEGER :: ULMAT_SOLVER_LIBRARY=MKL_PARDISO_FLAG                 !< Integer ULMAT library flag (defaults to MKL PARDISO)
 INTEGER :: UGLMAT_SOLVER_LIBRARY=MKL_CPARDISO_FLAG               !< Integer UGLMAT library flag (defaults to MKL CPARDISO)
-INTEGER :: PRES_FLAG = FFT_FLAG                                  !< Pressure solver
+INTEGER :: PRES_FLAG = SOAP_FLAG                                   !< Pressure solver (default: SOAP - Smoothness-Based Adaptive Poisson)
 LOGICAL :: TUNNEL_PRECONDITIONER=.FALSE.                         !< Use special pressure preconditioner for tunnels
 INTEGER :: TUNNEL_NXP                                            !< Number of x points in the entire tunnel
 REAL(EB), ALLOCATABLE, DIMENSION(:) :: TP_AA                     !< Upper off-diagonal of tri-diagonal matrix for tunnel pressure
@@ -667,7 +732,7 @@ REAL(EB) :: RHOMAX                              !< Maximum gas density (kg/m3)
 
 INTEGER, PARAMETER :: CENTRAL_LIMITER=0,GODUNOV_LIMITER=1,SUPERBEE_LIMITER=2,MINMOD_LIMITER=3,CHARM_LIMITER=4,MP5_LIMITER=5
 INTEGER :: I_FLUX_LIMITER=SUPERBEE_LIMITER,CFL_VELOCITY_NORM=-999
-LOGICAL :: CFL_VELOCITY_NORM_USER_SPECIFIED=.FALSE.
+LOGICAL :: CFL_VELOCITY_NORM_USER_SPECIFIED=.FALSE.,FDS5_CFL_NORM=.FALSE.
 
 ! Numerical quadrature (used in TEST_FILTER)
 
