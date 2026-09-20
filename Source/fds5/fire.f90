@@ -71,6 +71,13 @@ IF (FLAME_SHEET .AND. .NOT.FS_BANNER_DONE) THEN
       ' FLAME_SHEET mode A active: ',N_FS_BURNERS_GLOBAL,' group(s), QCAP=',FLAME_SHEET_QCAP,' W/m3, HMAX=',FLAME_SHEET_HMAX,' m'
    IF (MYID==0 .AND. FLAME_SHEET_TAU>0._EB) WRITE(LU_OUTPUT,'(A,ES9.2,A)') &
       ' FLAME_SHEET thermal buffering TAU=',FLAME_SHEET_TAU,' s (R28b)'   ! R28b
+   IF (MYID==0 .AND. FLAME_SHEET_RT==0._EB) WRITE(LU_OUTPUT,'(A)') &
+      ' FLAME_SHEET RT-subgrid stabilization: OFF'                                   ! R28h
+   IF (MYID==0 .AND. FLAME_SHEET_RT>0._EB) WRITE(LU_OUTPUT,'(A,ES9.2,A)') &
+      ' FLAME_SHEET RT-subgrid stabilization: FIXED C=',FLAME_SHEET_RT,' (R28f)'      ! R28f
+   IF (MYID==0 .AND. FLAME_SHEET_RT<0._EB) WRITE(LU_OUTPUT,'(A,ES9.2,A,F4.1,A,F4.1,A,F4.1,A)') &
+      ' FLAME_SHEET RT-subgrid stabilization: ADAPTIVE LMAX=',FLAME_SHEET_RT_LMAX, &
+      ' m, R_TARGET=',2.0,', C_eff in [',0.1,',',0.9,'] (R28h)'                       ! R28h
    FS_BANNER_DONE = .TRUE.
 ENDIF
 

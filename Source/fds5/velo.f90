@@ -54,11 +54,17 @@ USE PHYSICAL_FUNCTIONS, ONLY: GET_VISCOSITY
 USE TURBULENCE, ONLY: VARDEN_DYNSMAG
 INTEGER, INTENT(IN) :: NM
 REAL(EB) :: DUDX,DUDY,DUDZ,DVDX,DVDY,DVDZ,DWDX,DWDY,DWDZ,SS,S12,S13,S23,DELTA,CS,YY_GET(1:N_SPECIES), &
-            DAMPING_FACTOR,MU_WALL,YPLUS,TMP_WGT
+            DAMPING_FACTOR,MU_WALL,YPLUS,TMP_WGT,DRDZ_LO,DRDZ_HI,N2NEG,RJ,F,C_EFF
 INTEGER :: I,J,K,ITMP,IIG,JJG,KKG,II,JJ,KK,IW
 REAL(EB), POINTER, DIMENSION(:,:,:) :: UU=>NULL(),VV=>NULL(),WW=>NULL(),RHOP=>NULL()
 REAL(EB), POINTER, DIMENSION(:,:,:,:) :: YYP=>NULL()
 REAL(EB), PARAMETER :: APLUS=26._EB
+REAL(EB), PARAMETER :: FS_RT_RJ0=0.10_EB    ! R28f: центр tanh-блендера по относительному скачку dRHO/rho
+REAL(EB), PARAMETER :: FS_RT_RW=0.10_EB     ! R28f: полуширина tanh-блендера
+REAL(EB), PARAMETER :: FS_RT_RTGT=2.0_EB    ! R28h: целевое отношение демпфирование/рост адаптивного режима
+REAL(EB), PARAMETER :: FS_RT_KINV=7.87_EB   ! R28h: R(2Δ) = KINV*C*F для одноячеечной границы
+REAL(EB), PARAMETER :: FS_RT_CMIN=0.10_EB   ! R28h: нижний кап C_eff
+REAL(EB), PARAMETER :: FS_RT_CMAX=0.90_EB   ! R28h: верхний кап C_eff
  
 CALL POINT_TO_MESH(NM)
  
@@ -154,6 +160,62 @@ IF (LES .OR. EVACUATION_ONLY(NM)) THEN
    ENDDO
    !$OMP END DO
    IF (EVACUATION_ONLY(NM)) CS = 0.9_EB
+ENDIF
+
+! R28f FLAME_SHEET: подсеточная RT-вязкость на неустойчиво стратифицированных
+! границах слоёв (тяжёлый газ над лёгким, dRHO/dz > 0). Проблема 142 с (TR §12.7):
+! на мелкой сетке граница холодный-сверху/горячий-снизу (A~0.38) развивает
+! сеточную моду Рэлея–Тейлора, div ±400 1/с валит DT в спираль. Член
+! nu = C*d^2*sqrt(-N^2), N^2 = -(g/rho)*dRHO/dz, гасит сеточный масштаб:
+! отношение демпфирование/рост на 2Δ равно ~8*C (одноячеечная граница) и НЕ
+! зависит от шага сетки; условие подавления C*F>0.13, полоса подавления
+! lambda_c ~ 3.1*Delta*(C/0.25)**(2/3) — длины волн больше lambda_c растут
+! физически (разрешённое перемешивание сохраняется). Только режим A
+! (prescribed Q); EDC/DNS-путь не затрагивается. FLAME_SHEET_RT: 0 = выкл.
+! Локализация: гладкий tanh-блендер по относительному скачку плотности на
+! ячейку RJ = dRHO/rho (центр 0.1, полуширина 0.1): на границе слоёв из
+! TR §12.7 RJ~0.76 -> член включён; внутри плавного плюма RJ~0.02-0.1 ->
+! ослаблен. Разрывный порог (жёсткий IF RJ>const) применять НЕЛЬЗЯ: вкл/выкл
+! между шагами раскачивает границу (численный эксперимент 15.09, кейс D2:
+! срыв на 166.7 с при прохождении тех же конфигураций без члена и с полным
+! членом).
+! R28h адаптивный режим (FLAME_SHEET_RT<0): C_eff вычисляется из ячейки —
+! R_eff = min(R_TARGET,(LMAX/(2d))^1.5), C_eff = clip(R_eff/KINV,CMIN,CMAX).
+! Полоса подавления в метрах зажата на LMAX: на грубых сетках член смягчается
+! (d=0.5 -> C_eff~0.127), на мелких (d<=0.25) держится полный C~0.254.
+! Положительное FLAME_SHEET_RT = фиксированный C (поведение R28f).
+IF (FLAME_SHEET .AND. FLAME_SHEET_RT/=0._EB .AND. .NOT.EVACUATION_ONLY(NM)) THEN
+   !$OMP DO COLLAPSE(3) PRIVATE(K,J,I,DELTA,DRDZ_LO,DRDZ_HI,N2NEG,RJ,F,C_EFF)
+   DO K=1,KBAR
+      DO J=1,JBAR
+         DO I=1,IBAR
+            IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
+            IF (RHOP(I,J,K)<=1.E-6_EB) CYCLE
+            DRDZ_LO = (RHOP(I,J,K)-RHOP(I,J,K-1))/(0.5_EB*(DZ(K)+DZ(K-1)))
+            DRDZ_HI = (RHOP(I,J,K+1)-RHOP(I,J,K))/(0.5_EB*(DZ(K)+DZ(K+1)))
+            DRDZ_HI = MAX(DRDZ_LO,DRDZ_HI,0._EB)
+            IF (DRDZ_HI<=0._EB) CYCLE
+            RJ = DRDZ_HI*DZ(K)/RHOP(I,J,K)
+            F  = 0.5_EB*(1._EB+TANH((RJ-FS_RT_RJ0)/FS_RT_RW))
+            IF (F<=1.E-4_EB) CYCLE
+            IF (TWO_D) THEN
+               DELTA = SQRT(DX(I)*DZ(K))
+            ELSE
+               DELTA = (DX(I)*DY(J)*DZ(K))**ONTH
+            ENDIF
+            IF (USE_MAX_FILTER_WIDTH) DELTA=MAX(DX(I),DY(J),DZ(K))
+            IF (FLAME_SHEET_RT>0._EB) THEN
+               C_EFF = FLAME_SHEET_RT
+            ELSE
+               C_EFF = MIN(FS_RT_RTGT,(FLAME_SHEET_RT_LMAX/(2._EB*DELTA))**1.5_EB)/FS_RT_KINV
+               C_EFF = MIN(MAX(C_EFF,FS_RT_CMIN),FS_RT_CMAX)
+            ENDIF
+            N2NEG   = -GVEC(3)*DRDZ_HI/RHOP(I,J,K)
+            MU(I,J,K) = MU(I,J,K) + RHOP(I,J,K)*C_EFF*F*DELTA**2*SQRT(N2NEG)
+         ENDDO
+      ENDDO
+   ENDDO
+   !$OMP END DO
 ENDIF
 
 ! Mirror viscosity into solids and exterior boundary cells

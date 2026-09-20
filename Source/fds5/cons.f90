@@ -143,11 +143,16 @@ REAL(EB) :: Y_O2_INFTY = 0.232428_EB
  REAL(EB) :: DT_GUARD_MASS=2._EB   ! R22: порог несожжённого ghost-топлива, кг
  REAL(EB) :: DT_GUARD_MAX=0.01_EB  ! R22: кэп DT, пока запас не рассосётся, с
  REAL(EB) :: FUEL_UNBURNED=0._EB   ! R22: интегратор несожжённого топлива, кг
-! R26 FLAME_SHEET (режим A): prescribed Q вместо EDC для прописных очагов
-LOGICAL :: FLAME_SHEET=.FALSE.           ! включение режима A
+! R26 FLAME_SHEET (режим A): prescribed Q вместо EDC для прописных очагов.
+! R28f: режим A — основной на ЛЮБОЙ сетке (владелец 15.09); EDC (FLAME_SHEET=.FALSE.)
+! применяется только для DNS-расчётов. Расхождение cons/read устранено.
+LOGICAL :: FLAME_SHEET=.TRUE.            ! включение режима A
 REAL(EB) :: FLAME_SHEET_QCAP=500000._EB  ! Вт/м3 — потолок объёмной плотности тепла в колонне
 REAL(EB) :: FLAME_SHEET_HMAX=0._EB       ! м — лимит высоты колонны (0 = без лимита)
 REAL(EB) :: FLAME_SHEET_TAU=0._EB        ! R28b: с, тепловая буферизация конуса (0 = выкл)
+REAL(EB) :: FLAME_SHEET_RT=-1._EB        ! R28h: <0 = адаптивный режим, 0 = выкл (поведение R28e),
+                                         ! >0 = фиксированный коэффициент подсеточной RT-вязкости (R28f)
+REAL(EB) :: FLAME_SHEET_RT_LMAX=1.0_EB   ! R28h: кап физической полосы подавления (м) адаптивного режима
 INTEGER :: N_SPECIES=0,I_WATER,I_CO2,N_REACTIONS,I_FUEL,I_PROG_CO, I_PROG_F, I_PROG_SOOT, I_CO, I_O2,I_SOOT,I_Z_MIN,I_Z_MAX, &
            I_N2,I_H2,N_Y_ARRAY,N_KAPPA_ARRAY,N_MIX_SPECIES=0,N_REAC_SPECIES=0
 
@@ -350,6 +355,7 @@ INTEGER :: N_AUTO_ZONE=0   ! R27: число синтетических зон �
 LOGICAL, ALLOCATABLE, DIMENSION(:) :: ZONE_IS_AUTO   ! R27j: маркер авто-зон (односторонняя утечка)
 LOGICAL :: AUTO_ZONE=.FALSE.         ! R28: cut-зоны запаркованы по умолчанию; включаются через &MISC AUTO_ZONE=.TRUE.
 LOGICAL :: PLUME_PROBE=.FALSE.       ! R28a: зонд PLUME — телеметрия окна плато 99-143 с (кейс c45daa57)
+LOGICAL :: CONSOLE_DEBUG=.FALSE.     ! R28g: пошаговые записи в консоль (LU_ERR): строка шага + зонд канала; только разработка/отладка
 LOGICAL :: STRICT_POCKETS=.TRUE.     ! R28e: зонирование запертых карманов (.FALSE. = диагностика/выключение)
 LOGICAL :: DUMP_SOLID_MAP=.FALSE.   ! R28e: дамп фактической маски SOLID после инициализации (диагностика транспорта)
 REAL(EB) :: AUTO_ZONE_MAX_GAP=6._EB  ! R27b: порог площади среза (м2); 0 = только строгие карманы

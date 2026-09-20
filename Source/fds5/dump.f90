@@ -3505,9 +3505,11 @@ SELECT CASE(DATE_TIME(2))
       MONTH='December'
 END SELECT
 
+! Строка шага в консоль — как в оригинальном FDS6 (SIMPLE_OUTPUT_ERR), безусловно.
 WRITE(LU_ERR,'(1X,A,I7,A,F10.2,A)')  'Time Step:',ICYC,',    Simulation Time:',T(1),' s'
 
-CALL PRINT_CHANNEL_PROBE(T(1))   ! R27i: форензика уличного канала (c45daa57)
+! R28g: отладочная телеметрия форка в консоль — только при CONSOLE_DEBUG=.TRUE.
+IF (CONSOLE_DEBUG) CALL PRINT_CHANNEL_PROBE(T(1))   ! R27i: форензика уличного канала (c45daa57)
 
 WRITE(LU_OUTPUT,'(7X,A,I7,3X,A,I3,A,I4,2X,I2.2,A,I2.2,A,I2.2)')  &
     'Time Step ',ICYC,TRIM(MONTH),DATE_TIME(3),', ',DATE_TIME(1), &

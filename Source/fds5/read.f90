@@ -1283,8 +1283,9 @@ NAMELIST /MISC/ PR,SC,TMPA,GVEC,PRESSURE_RELAX_FACTOR,RELAXATION_FACTOR,FYI, &
                 EVACUATION_DRILL, NO_EVACUATION, &
                 PRESSURE_CORRECTION,CHECK_POISSON,STRATIFICATION,RESTART_CHID,PARTICLE_CFL, &
                 CFL_MAX,CFL_MIN,VN_MAX,VN_MIN,SOLID_PHASE_ONLY,SMOKE_ALBEDO,GROUND_LEVEL,CFL_DP_SCALE, &
-                DT_GUARD,DT_GUARD_MASS,DT_GUARD_MAX,FLAME_SHEET,FLAME_SHEET_QCAP,FLAME_SHEET_HMAX,FLAME_SHEET_TAU, &
-                AUTO_ZONE,AUTO_ZONE_MAX_GAP,PLUME_PROBE,STRICT_POCKETS,DUMP_SOLID_MAP, &
+                 DT_GUARD,DT_GUARD_MASS,DT_GUARD_MAX,FLAME_SHEET,FLAME_SHEET_QCAP,FLAME_SHEET_HMAX,FLAME_SHEET_TAU, &
+                 FLAME_SHEET_RT,FLAME_SHEET_RT_LMAX, &
+                 AUTO_ZONE,AUTO_ZONE_MAX_GAP,PLUME_PROBE,STRICT_POCKETS,DUMP_SOLID_MAP,CONSOLE_DEBUG, &
                 AL2O3,SHARED_FILE_SYSTEM, &
                 FLUX_LIMITER,FREEZE_VELOCITY,CFL_VELOCITY_NORM,PERIODIC_TEST, &
                 WIND_ONLY,TERRAIN_CASE,COMPUTE_VISCOSITY_TWICE, &
@@ -1408,13 +1409,18 @@ CFL_DP_SCALE         = 1.0_EB       ! масштаб DP-члена (диверг
                                     ! требуют DT~0.005, кэп 0.01 их не спасает и latch разрушает физику
 DT_GUARD_MASS         = 2.0_EB      ! R22: порог запаса, кг
  DT_GUARD_MAX          = 0.01_EB    ! R22: кэп DT при активном страже, с
- FLAME_SHEET           = .TRUE.     ! R26: режим A (prescribed Q) — по умолчанию ВЫКЛ (= путь R20)
+ FLAME_SHEET           = .TRUE.     ! R28f: режим A (prescribed Q) — основной на любой сетке;
+                                    ! EDC (FLAME_SHEET=.FALSE.) — только для DNS-расчётов
  FLAME_SHEET_QCAP      = 500._EB    ! R26: потолок объёмной плотности тепла, кВт/м3 (переводится в Вт/м3)
  FLAME_SHEET_HMAX      = 0._EB      ! R26: лимит высоты колонны над горелкой, м (0 = без лимита)
  FLAME_SHEET_TAU       = 0._EB      ! R28b: тепловая буферизация конуса, с (0 = выкл; рычаг 2 из плана §5)
+ FLAME_SHEET_RT        = -1._EB     ! R28h: <0 = адаптивный режим, 0 = выкл (поведение R28e), >0 = фиксированный C (R28f)
+ FLAME_SHEET_RT_LMAX   = 1.0_EB     ! R28h: кап физической полосы подавления (м) адаптивного режима
+                                    ! C_eff = clip(min(R_TARGET,(LMAX/2d)^1.5)/7.87, 0.1, 0.9); R_TARGET=2.0
  AUTO_ZONE             = .FALSE.    ! R28: cut-зоны запаркованы (NI @25-27 c в c45daa57); строгие карманы остаются
  AUTO_ZONE_MAX_GAP     = 6._EB      ! R27b: порог площади горла (м2): меньше — отсек зонируется с утечкой
  PLUME_PROBE           = .FALSE.    ! R28a: телеметрия 142-с проблемы (окно 99-143 с), LU_ERR
+ CONSOLE_DEBUG         = .FALSE.    ! R28g: пошаговые записи в консоль (строка шага + зонд канала); только отладка
  STRICT_POCKETS        = .TRUE.     ! R28e: зонировать запертые карманы (.FALSE. = выключить)
  DUMP_SOLID_MAP        = .FALSE.    ! R28e: дамп SOLID-маски после инициализации
   VEG_LEVEL_SET        = .FALSE.
