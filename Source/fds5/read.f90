@@ -11739,8 +11739,10 @@ ENDIF
 IF (SPEC_ID/='null' .AND. SPEC_INDEX==0) THEN
    DO NS=1,N_STATE_SPECIES
       IF (SPEC_ID==MF_SPEC_ID(NS)) THEN
-         ! R28j: продукты (NS>=4) при SPEC_ID_NU-входе — через трассер PRODUCTS (методика)
-         IF (SPEC_ID_NU_ACTIVE .AND. NS>=4 .AND. N_PRODUCTS_COMP>0) CYCLE
+         ! R28k: продукты (NS>=4) при SPEC_ID_NU-входе — через трассер PRODUCTS (методика).
+         ! Сажа — исключение: берём свободный вид (транспорт/турбулентная структура),
+         ! трассер в конусе насыщается стехиометрическим капом и рисует монолитный конус.
+         IF (SPEC_ID_NU_ACTIVE .AND. NS>=4 .AND. NS/=SOOT_INDEX .AND. N_PRODUCTS_COMP>0) CYCLE
          SPEC_INDEX = -NS
          EXIT
       ENDIF
