@@ -182,6 +182,14 @@ REAL(EB) :: PRODUCTS_COMP_MASS_FRAC(MAX_PRODUCTS_COMP)
 REAL(EB) :: PRODUCTS_COMP_MW(MAX_PRODUCTS_COMP)
 REAL(EB) :: PRODUCTS_COMP_RCON(MAX_PRODUCTS_COMP)
 INTEGER, PARAMETER :: DERIVED_SPEC_OFFSET=10000
+! R28j (Fenix+ / SPEC_ID_NU): выходы продуктов из &SPEC/&REAC
+REAL(EB) :: PRODUCTS_MW_SUM=0._EB                     ! ненормированная молярная масса люмп-смеси, кг/кмоль
+REAL(EB) :: PRODUCTS_COMP_YIELD(MAX_PRODUCTS_COMP)    ! кг компонента на кг топлива
+REAL(EB) :: PRODUCTS_TRACER_RATIO=0._EB               ! кг state-продуктов на кг топлива (нормировка трассера)
+REAL(EB) :: AIR_LUMP_XMW_SUM=0._EB                    ! молярная масса люмп-смеси AIR
+REAL(EB) :: AIR_LUMP_X_O2=0._EB                       ! мольная доля O2 в люмп-AIR
+LOGICAL :: SPEC_ID_NU_ACTIVE=.FALSE.                  ! вход &REAC SPEC_ID_NU (Fenix+)
+INTEGER :: PRODUCTS_H2O_COMP=0                        ! индекс WATER VAPOR в PRODUCTS
 
 ! Radiation parameters
 
