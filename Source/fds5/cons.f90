@@ -92,6 +92,7 @@ REAL(EB) :: EVAC_DT_FLOWFIELD,EVAC_DT_STEADY_STATE,EVAC_DT,T_EVAC,T_EVAC_SAVE
 INTEGER :: EVAC_PRESSURE_ITERATIONS,EVAC_TIME_ITERATIONS,EVAC_N_QUANTITIES,I_EVAC
 INTEGER :: EVAC_AVATAR_NCOLOR
 LOGICAL :: EVACUATION_MC_MODE=.FALSE.,EVACUATION_DRILL=.FALSE.,NO_EVACUATION=.FALSE.
+LOGICAL :: EVAC_PLUS=.FALSE.   ! R29a: включение движка EVAC+ (Методика 1140)
 CHARACTER(30), ALLOCATABLE, DIMENSION(:) :: EVAC_CLASS_NAME
 INTEGER, ALLOCATABLE, DIMENSION(:) :: EVAC_QUANTITIES_INDEX
 INTEGER, ALLOCATABLE, DIMENSION(:,:) :: EVAC_CLASS_RGB,EVAC_AVATAR_RGB
@@ -143,15 +144,28 @@ REAL(EB) :: Y_O2_INFTY = 0.232428_EB
  REAL(EB) :: DT_GUARD_MASS=2._EB   ! R22: порог несожжённого ghost-топлива, кг
  REAL(EB) :: DT_GUARD_MAX=0.01_EB  ! R22: кэп DT, пока запас не рассосётся, с
  REAL(EB) :: FUEL_UNBURNED=0._EB   ! R22: интегратор несожжённого топлива, кг
+! R28x: динамический локальный предел Q по целевому шагу (анти-схема).
+! D_target = CFL_TARGET/DT_TARGET - |u|/d — бюджет дивергенции ячейки, при котором
+! шаг не падает ниже DT_TARGET; q_dyn = D_target*rho*cp*T (Вт/м3).
+! Итог: Q = MIN(Q_EDC, Q_UPPER, q_dyn)*F_GOVERN; несгоревший остаток остаётся в Y_F
+! и дожигается при спаде дивергенции (штатная консервативность fire.f90).
+! DT_TARGET: <0 = авто-выбор при чтении (по HRRPUA_MAX), 0 = выкл, >0 = задан.
+REAL(EB) :: DT_TARGET=-1._EB, CFL_TARGET=0.8_EB
 ! R26 FLAME_SHEET (режим A): prescribed Q вместо EDC для прописных очагов.
 ! R28f: режим A — основной на ЛЮБОЙ сетке (владелец 15.09); EDC (FLAME_SHEET=.FALSE.)
 ! применяется только для DNS-расчётов. Расхождение cons/read устранено.
-LOGICAL :: FLAME_SHEET=.TRUE.            ! включение режима A
+! R28w (владелец 24.09, консенсус с ментором): откат — режим A больше НЕ основной.
+! Методика 1140 задаётся входом (HRRPUA+RAMP_Q => кривая = газоотдача топлива),
+! горение — естественное EDC с GOVERN_HRR; причина: принудительное объёмное
+! размещение тепла/сажи ломало гидродинамику и оптику дыма (кейс 0106e472).
+LOGICAL :: FLAME_SHEET=.FALSE.        ! режим A — только явным &MISC FLAME_SHEET=.TRUE. (deprecated)
 REAL(EB) :: FLAME_SHEET_QCAP=500000._EB  ! Вт/м3 — потолок объёмной плотности тепла в колонне
 REAL(EB) :: FLAME_SHEET_HMAX=0._EB       ! м — лимит высоты колонны (0 = без лимита)
 REAL(EB) :: FLAME_SHEET_TAU=0._EB        ! R28b: с, тепловая буферизация конуса (0 = выкл)
-REAL(EB) :: FLAME_SHEET_RT=-1._EB        ! R28h: <0 = адаптивный режим, 0 = выкл (поведение R28e),
-                                         ! >0 = фиксированный коэффициент подсеточной RT-вязкости (R28f)
+REAL(EB) :: FLAME_SHEET_RT=0._EB         ! R28r: по умолчанию ВЫКЛ — турбулентность как в оригинальном
+                                         ! FDS 5.5.3 (демпфер гасил фронт дымового слоя: «молоко», кейс 0106e472).
+                                         ! R28h: <0 = адаптивный режим (для грубых сеток), >0 = фиксированный
+                                         ! коэффициент подсеточной RT-вязкости (R28f)
 REAL(EB) :: FLAME_SHEET_RT_LMAX=1.0_EB   ! R28h: кап физической полосы подавления (м) адаптивного режима
 INTEGER :: N_SPECIES=0,I_WATER,I_CO2,N_REACTIONS,I_FUEL,I_PROG_CO, I_PROG_F, I_PROG_SOOT, I_CO, I_O2,I_SOOT,I_Z_MIN,I_Z_MAX, &
            I_N2,I_H2,N_Y_ARRAY,N_KAPPA_ARRAY,N_MIX_SPECIES=0,N_REAC_SPECIES=0
@@ -182,6 +196,14 @@ REAL(EB) :: PRODUCTS_COMP_MASS_FRAC(MAX_PRODUCTS_COMP)
 REAL(EB) :: PRODUCTS_COMP_MW(MAX_PRODUCTS_COMP)
 REAL(EB) :: PRODUCTS_COMP_RCON(MAX_PRODUCTS_COMP)
 INTEGER, PARAMETER :: DERIVED_SPEC_OFFSET=10000
+! R28j (Fenix+ / SPEC_ID_NU): выходы продуктов из &SPEC/&REAC
+REAL(EB) :: PRODUCTS_MW_SUM=0._EB                     ! ненормированная молярная масса люмп-смеси, кг/кмоль
+REAL(EB) :: PRODUCTS_COMP_YIELD(MAX_PRODUCTS_COMP)    ! кг компонента на кг топлива
+REAL(EB) :: PRODUCTS_TRACER_RATIO=0._EB               ! кг state-продуктов на кг топлива (нормировка трассера)
+REAL(EB) :: AIR_LUMP_XMW_SUM=0._EB                    ! молярная масса люмп-смеси AIR
+REAL(EB) :: AIR_LUMP_X_O2=0._EB                       ! мольная доля O2 в люмп-AIR
+LOGICAL :: SPEC_ID_NU_ACTIVE=.FALSE.                  ! вход &REAC SPEC_ID_NU (Fenix+)
+INTEGER :: PRODUCTS_H2O_COMP=0                        ! индекс WATER VAPOR в PRODUCTS
 
 ! Radiation parameters
 

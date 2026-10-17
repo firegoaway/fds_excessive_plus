@@ -1830,8 +1830,8 @@ TYPE(MESH_TYPE), POINTER :: M1,M2
 INTEGER :: I,J,K,I_LO,I_HI,J_LO,J_HI,K_LO,K_HI,II_0,JJ_0,KK_0,II,JJ,KK, &
            NRX,NRY,NRZ,II_LO,JJ_LO,KK_LO,INDEX_LIST(12),IERROR,IW,IOR
 REAL(EB) :: VOLUME_LIST(3)
-REAL(EB), POINTER, DIMENSION(:,:,:) :: UU1,VV1,WW1,UU2,VV2,WW2
 REAL(EB), PARAMETER :: RF=0.5_EB,OMRF=0.5_EB
+REAL(EB), POINTER, DIMENSION(:,:,:) :: UU1,VV1,WW1,UU2,VV2,WW2
 
 CALL LOCATE_MESH(INDEX_LIST,VOLUME_LIST,NM1,NM2,IERROR)
 SELECT CASE (IERROR)
@@ -1872,6 +1872,8 @@ ELSEIF (CORRECTOR) THEN
 ENDIF
 
 ! Set fine mesh boundary value to corresponding coarse mesh value
+! R28m: релаксация RF/OMRF гасит отражение на границе ребёнка при смешанных
+! кратностях (0.5 м + 0.25 м в одном родителе; кейс T5, DP-рост на углу ребёнка)
 
 ! U-VELOCITY
 
@@ -1886,25 +1888,25 @@ DO K = K_LO,K_HI
       IF (II_0==M2%IBAR) THEN
          DO KK = KK_0+1,KK_0+NRZ
             DO JJ = JJ_0+1,JJ_0+NRY
-               UU2(II_0,JJ,KK) = UU1(I,J,K)
+               UU2(II_0,JJ,KK) = RF*UU2(II_0,JJ,KK) + OMRF*UU1(I,J,K)
             ENDDO
          ENDDO
       ENDIF
-         
+
       ! west face
       I = I_LO-1
       II_0 = II_LO + (I-I_LO+1)*NRX
       IF (II_0==0) THEN
          DO KK = KK_0+1,KK_0+NRZ
             DO JJ = JJ_0+1,JJ_0+NRY
-               UU2(II_0,JJ,KK) = UU1(I,J,K)
+               UU2(II_0,JJ,KK) = RF*UU2(II_0,JJ,KK) + OMRF*UU1(I,J,K)
             ENDDO
          ENDDO
       ENDIF
-         
+
    ENDDO
 ENDDO
-   
+
 ! V-VELOCITY
 
 DO K = K_LO,K_HI
@@ -1918,25 +1920,25 @@ DO K = K_LO,K_HI
       IF (JJ_0==M2%JBAR) THEN
          DO KK = KK_0+1,KK_0+NRZ
             DO II = II_0+1,II_0+NRX
-               VV2(II,JJ_0,KK) = VV1(I,J,K)
+               VV2(II,JJ_0,KK) = RF*VV2(II,JJ_0,KK) + OMRF*VV1(I,J,K)
             ENDDO
          ENDDO
       ENDIF
-         
+
       ! south face
       J = J_LO-1
       JJ_0 = JJ_LO + (J-J_LO+1)*NRY
       IF (JJ_0==0) THEN
          DO KK = KK_0+1,KK_0+NRZ
             DO II = II_0+1,II_0+NRX
-               VV2(II,JJ_0,KK) = VV1(I,J,K)
+               VV2(II,JJ_0,KK) = RF*VV2(II,JJ_0,KK) + OMRF*VV1(I,J,K)
             ENDDO
          ENDDO
       ENDIF
-         
+
    ENDDO
 ENDDO
-   
+
 ! W-VELOCITY
 
 DO J = J_LO,J_HI
@@ -1950,22 +1952,22 @@ DO J = J_LO,J_HI
       IF (KK_0==M2%KBAR) THEN
          DO JJ = JJ_0+1,JJ_0+NRY
             DO II = II_0+1,II_0+NRX
-               WW2(II,JJ,KK_0) = WW1(I,J,K)
+               WW2(II,JJ,KK_0) = RF*WW2(II,JJ,KK_0) + OMRF*WW1(I,J,K)
             ENDDO
          ENDDO
       ENDIF
-         
+
       ! bottom face
       K = K_LO-1
       KK_0 = KK_LO + (K-K_LO+1)*NRZ
       IF (KK_0==0) THEN
          DO JJ = JJ_0+1,JJ_0+NRY
             DO II = II_0+1,II_0+NRX
-               WW2(II,JJ,KK_0) = WW1(I,J,K)
+               WW2(II,JJ,KK_0) = RF*WW2(II,JJ,KK_0) + OMRF*WW1(I,J,K)
             ENDDO
          ENDDO
       ENDIF
-         
+
    ENDDO
 ENDDO
 
@@ -2004,6 +2006,7 @@ TYPE(MESH_TYPE), POINTER :: M1,M2
 INTEGER :: N,I,J,K,I_LO,I_HI,J_LO,J_HI,K_LO,K_HI,II_0,JJ_0,KK_0,II,JJ,KK, &
            NRX,NRY,NRZ,II_LO,JJ_LO,KK_LO,INDEX_LIST(12),IERROR,IW
 REAL(EB) :: VOLUME_LIST(3)
+REAL(EB), PARAMETER :: RF=0.5_EB,OMRF=0.5_EB ! R28m: релаксация ghost-заполнения
 REAL(EB), POINTER, DIMENSION(:,:,:) :: RHOP1,RHOP2,TMP1,TMP2,HH1,HH2
 REAL(EB), POINTER, DIMENSION(:,:,:,:) :: YYP1,YYP2
 
@@ -2067,10 +2070,10 @@ SPECIES_LOOP: DO N=1,N_SPECIES
          ! is handled in WALL_BC; similar conditions apply below
             DO KK = KK_0+1,KK_0+NRZ
                DO JJ = JJ_0+1,JJ_0+NRY
-                  RHOP2(II_0,JJ,KK) = RHOP1(I,J,K)
-                  TMP2(II_0,JJ,KK) = TMP1(I,J,K)
-                  HH2(II_0,JJ,KK) = HH1(I,J,K)
-                  IF (N_SPECIES>0) YYP2(II_0,JJ,KK,N) = YYP1(I,J,K,N)
+                   RHOP2(II_0,JJ,KK) = RF*RHOP2(II_0,JJ,KK) + OMRF*RHOP1(I,J,K)
+                   TMP2(II_0,JJ,KK) = RF*TMP2(II_0,JJ,KK) + OMRF*TMP1(I,J,K)
+                   HH2(II_0,JJ,KK) = RF*HH2(II_0,JJ,KK) + OMRF*HH1(I,J,K)
+                   IF (N_SPECIES>0) YYP2(II_0,JJ,KK,N) = RF*YYP2(II_0,JJ,KK,N) + OMRF*YYP1(I,J,K,N)
                ENDDO
             ENDDO
          ENDIF
@@ -2081,10 +2084,10 @@ SPECIES_LOOP: DO N=1,N_SPECIES
          IF (II_0==0 .AND. I_LO/=1) THEN
             DO KK = KK_0+1,KK_0+NRZ
                DO JJ = JJ_0+1,JJ_0+NRY
-                  RHOP2(II_0,JJ,KK) = RHOP1(I,J,K)
-                  TMP2(II_0,JJ,KK) = TMP1(I,J,K)
-                  HH2(II_0,JJ,KK) = HH1(I,J,K)
-                  IF (N_SPECIES>0) YYP2(II_0,JJ,KK,N) = YYP1(I,J,K,N)
+                   RHOP2(II_0,JJ,KK) = RF*RHOP2(II_0,JJ,KK) + OMRF*RHOP1(I,J,K)
+                   TMP2(II_0,JJ,KK) = RF*TMP2(II_0,JJ,KK) + OMRF*TMP1(I,J,K)
+                   HH2(II_0,JJ,KK) = RF*HH2(II_0,JJ,KK) + OMRF*HH1(I,J,K)
+                   IF (N_SPECIES>0) YYP2(II_0,JJ,KK,N) = RF*YYP2(II_0,JJ,KK,N) + OMRF*YYP1(I,J,K,N)
                ENDDO
             ENDDO
          ENDIF
@@ -2103,10 +2106,10 @@ SPECIES_LOOP: DO N=1,N_SPECIES
          IF (JJ_0==M2%JBP1 .AND. J_HI/=M1%JBAR) THEN
             DO KK = KK_0+1,KK_0+NRZ
                DO II = II_0+1,II_0+NRX
-                  RHOP2(II,JJ_0,KK) = RHOP1(I,J,K)
-                  TMP2(II,JJ_0,KK) = TMP1(I,J,K)
-                  HH2(II,JJ_0,KK) = HH1(I,J,K)
-                  IF (N_SPECIES>0) YYP2(II,JJ_0,KK,N) = YYP1(I,J,K,N)
+                   RHOP2(II,JJ_0,KK) = RF*RHOP2(II,JJ_0,KK) + OMRF*RHOP1(I,J,K)
+                   TMP2(II,JJ_0,KK) = RF*TMP2(II,JJ_0,KK) + OMRF*TMP1(I,J,K)
+                   HH2(II,JJ_0,KK) = RF*HH2(II,JJ_0,KK) + OMRF*HH1(I,J,K)
+                   IF (N_SPECIES>0) YYP2(II,JJ_0,KK,N) = RF*YYP2(II,JJ_0,KK,N) + OMRF*YYP1(I,J,K,N)
                ENDDO
             ENDDO
          ENDIF
@@ -2117,10 +2120,10 @@ SPECIES_LOOP: DO N=1,N_SPECIES
          IF (JJ_0==0 .AND. J_LO/=1) THEN
             DO KK = KK_0+1,KK_0+NRZ
                DO II = II_0+1,II_0+NRX
-                  RHOP2(II,JJ_0,KK) = RHOP1(I,J,K)
-                  TMP2(II,JJ_0,KK) = TMP1(I,J,K)
-                  HH2(II,JJ_0,KK) = HH1(I,J,K)
-                  IF (N_SPECIES>0) YYP2(II,JJ_0,KK,N) = YYP1(I,J,K,N)
+                   RHOP2(II,JJ_0,KK) = RF*RHOP2(II,JJ_0,KK) + OMRF*RHOP1(I,J,K)
+                   TMP2(II,JJ_0,KK) = RF*TMP2(II,JJ_0,KK) + OMRF*TMP1(I,J,K)
+                   HH2(II,JJ_0,KK) = RF*HH2(II,JJ_0,KK) + OMRF*HH1(I,J,K)
+                   IF (N_SPECIES>0) YYP2(II,JJ_0,KK,N) = RF*YYP2(II,JJ_0,KK,N) + OMRF*YYP1(I,J,K,N)
                ENDDO
             ENDDO
          ENDIF
@@ -2139,10 +2142,10 @@ SPECIES_LOOP: DO N=1,N_SPECIES
          IF (KK_0==M2%KBP1  .AND. K_HI/=M1%KBAR) THEN
             DO JJ = JJ_0+1,JJ_0+NRY
                DO II = II_0+1,II_0+NRX
-                  RHOP2(II,JJ,KK_0) = RHOP1(I,J,K)
-                  TMP2(II,JJ,KK_0) = TMP1(I,J,K)
-                  HH2(II,JJ,KK_0) = HH1(I,J,K)
-                  IF (N_SPECIES>0) YYP2(II,JJ,KK_0,N) = YYP1(I,J,K,N)
+                   RHOP2(II,JJ,KK_0) = RF*RHOP2(II,JJ,KK_0) + OMRF*RHOP1(I,J,K)
+                   TMP2(II,JJ,KK_0) = RF*TMP2(II,JJ,KK_0) + OMRF*TMP1(I,J,K)
+                   HH2(II,JJ,KK_0) = RF*HH2(II,JJ,KK_0) + OMRF*HH1(I,J,K)
+                   IF (N_SPECIES>0) YYP2(II,JJ,KK_0,N) = RF*YYP2(II,JJ,KK_0,N) + OMRF*YYP1(I,J,K,N)
                ENDDO
             ENDDO
          ENDIF
@@ -2153,10 +2156,10 @@ SPECIES_LOOP: DO N=1,N_SPECIES
          IF (KK_0==0 .AND. K_LO/=1) THEN
             DO JJ = JJ_0+1,JJ_0+NRY
                DO II = II_0+1,II_0+NRX
-                  RHOP2(II,JJ,KK_0) = RHOP1(I,J,K)
-                  TMP2(II,JJ,KK_0) = TMP1(I,J,K)
-                  HH2(II,JJ,KK_0) = HH1(I,J,K)
-                  IF (N_SPECIES>0) YYP2(II,JJ,KK_0,N) = YYP1(I,J,K,N)
+                   RHOP2(II,JJ,KK_0) = RF*RHOP2(II,JJ,KK_0) + OMRF*RHOP1(I,J,K)
+                   TMP2(II,JJ,KK_0) = RF*TMP2(II,JJ,KK_0) + OMRF*TMP1(I,J,K)
+                   HH2(II,JJ,KK_0) = RF*HH2(II,JJ,KK_0) + OMRF*HH1(I,J,K)
+                   IF (N_SPECIES>0) YYP2(II,JJ,KK_0,N) = RF*YYP2(II,JJ,KK_0,N) + OMRF*YYP1(I,J,K,N)
                ENDDO
             ENDDO
          ENDIF

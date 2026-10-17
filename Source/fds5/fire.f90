@@ -67,6 +67,12 @@ IF (GOVERN_HRR) DZ_CAP = 0.25_EB
 
 ! R26 FLAME_SHEET (режим A): prescribed Q вместо EDC — см. FDS5_FLAME_SHEET_DESIGN.md
 IF (FLAME_SHEET .AND. .NOT.FS_BANNER_DONE) THEN
+   IF (MYID==0) WRITE(LU_OUTPUT,'(A)') &
+      ' WARNING: FLAME_SHEET is DEPRECATED (R28w). Prescribed volumetric Q/soot placement'   ! R28w
+   IF (MYID==0) WRITE(LU_OUTPUT,'(A)') &
+      '   causes physical artifacts in smoke transport and opacity. Methodology 1140 is'      ! R28w
+   IF (MYID==0) WRITE(LU_OUTPUT,'(A)') &
+      '   input-driven now (HRRPUA + RAMP_Q); natural EDC is the default combustion mode.'    ! R28w
    IF (MYID==0) WRITE(LU_OUTPUT,'(A,I5,A,ES9.2,A,ES9.2,A)') &
       ' FLAME_SHEET mode A active: ',N_FS_BURNERS_GLOBAL,' group(s), QCAP=',FLAME_SHEET_QCAP,' W/m3, HMAX=',FLAME_SHEET_HMAX,' m'
    IF (MYID==0 .AND. FLAME_SHEET_TAU>0._EB) WRITE(LU_OUTPUT,'(A,ES9.2,A)') &
@@ -110,9 +116,9 @@ REAL(EB) :: Y_FU_0,A,ETRM,Y_O2_0,Y_CO_0,DYF,DX_FDT,HFAC_F,DTT,DELTA,DELTA2,ACCEL
              Y_O2_MAX,TMP_MIN,Y_O2_CORR,Q_NEW,Q_OLD,F_TO_CO,DELTAH_CO,DYCO,HFAC_CO,RHOX, &
              X_FU,X_O2,X_FU_0,X_O2_0,X_FU_S,X_O2_S,X_FU_N,X_O2_N,CO_TO_O2,CRIT_FLAME_TMPA, &
              Y_FU_MAX,TMP_F_MIN,Y_F_CORR,Z_2_MIN,Z_2_MIN_FAC,WGT,OMWGT,Q_BOUND_1,Q_BOUND_2,Q_BOUND_3,YY_GET(1:N_SPECIES), &
-              ZETA,CS2,H_F_0,H_F_N,H_G_0,H_G_N,DYAIR,DELTAH_F,TAU_D,TAU_U,TAU_G,EPSK,KSGS,KP,CP,S_L,TAU_CHEM, &
-              ZMIX,BURN_F, & ! R20: unmixedness EDC
-              DUDX,DUDY,DUDZ,DVDX,DVDY,DVDZ,DWDX,DWDY,DWDZ,SS2,S12,S13,S23
+               ZETA,CS2,H_F_0,H_F_N,H_G_0,H_G_N,DYAIR,DELTAH_F,TAU_D,TAU_U,TAU_G,EPSK,KSGS,KP,CP,S_L,TAU_CHEM, &
+               ZMIX,BURN_F,Q_DYN,UVW_ADV,D_TARGET,Q_DYN_REM, & ! R28x: динамический предел Q
+               DUDX,DUDY,DUDZ,DVDX,DVDY,DVDZ,DWDX,DWDY,DWDZ,SS2,S12,S13,S23
 REAL(EB), PARAMETER :: Y_FU_MIN=1.E-10_EB,Y_O2_MIN=1.E-10_EB,X_O2_MIN=1.E-16_EB,X_FU_MIN=1.E-16_EB,Y_CO_MIN=1.E-10_EB, &
                        M_MIN=0.1_EB,M_MAX=0.3_EB
 INTEGER :: NODETS,I,J,K,II,JJ,KK,IOR,IC,IW,IWA(-3:3),ITMP,ICFT
@@ -179,7 +185,7 @@ IF (.NOT.ALLOCATED(ZETA_STORE(NM)%Z)) &
 
 !$OMP DO COLLAPSE(3) PRIVATE(K,J,I,IC,Y_FU_0,Y_O2_0,Y_O2_MAX,Y_FU_MAX,TMP_MIN,TMP_F_MIN,IOR,II,JJ,KK,IW) &
 !$OMP PRIVATE(Y_O2_CORR,Y_F_CORR,DYF,DELTA,Q_BOUND_1,Q_BOUND_2,Q_NEW,CRIT_FLAME_TMPA,YY_GET,DYAIR) &
-!$OMP PRIVATE(TAU_D,TAU_U,TAU_G,EPSK,KSGS,ZMIX,BURN_F)
+!$OMP PRIVATE(TAU_D,TAU_U,TAU_G,EPSK,KSGS,ZMIX,BURN_F,CP,Q_DYN,UVW_ADV,D_TARGET)
 DO K=1,KBAR
    DO J=1,JBAR
       DO I=1,IBAR
@@ -367,8 +373,22 @@ S_L = LAMINAR_FLAME_SPEED(TMPA,RN%O2_F_RATIO/(Y_O2_0/Y_FU_0))
 ENDIF NEW_DYF_IF
             ENDIF R20_EDC_IF
 
-             Q_BOUND_2 = Q_UPPER
-             Q_NEW = MIN(Q_BOUND_1,Q_BOUND_2)*F_GOVERN
+              Q_BOUND_2 = Q_UPPER
+              ! R28x: анти-схема — отрицательная обратная связь от шага к источнику.
+              ! Бюджет дивергенции ячейки: D_target = CFL_TARGET/DT_TARGET - |u|/d.
+              ! Тепловыделение свыше q_dyn = D_target*rho*cp*T не допускается: шаг
+              ! не обрушается вспышкой; топливо остаётся в Y_F (строка ниже пересчёт
+              ! DYF из принятого Q) и дожигается при спаде дивергенции. На спокойных
+              ! фазах q_dyn > Q_UPPER и предел неактивен (правит статический Q_UPPER).
+              IF (DT_TARGET>0._EB) THEN
+                 UVW_ADV  = MAX(ABS(US(I,J,K))*RDX(I),ABS(VS(I,J,K))*RDY(J),ABS(WS(I,J,K))*RDZ(K))
+                 D_TARGET = MAX(0.1_EB, CFL_TARGET/DT_TARGET - UVW_ADV)
+                 YY_GET(:) = YY(I,J,K,:)
+                 CALL GET_AVERAGE_SPECIFIC_HEAT(YY_GET,CP,TMP(I,J,K))
+                 Q_DYN = D_TARGET*RHO(I,J,K)*CP*TMP(I,J,K)
+                 Q_BOUND_2 = MIN(Q_UPPER,Q_DYN)
+              ENDIF
+              Q_NEW = MIN(Q_BOUND_1,Q_BOUND_2)*F_GOVERN
             ! MLR-based HRR mode: HRR grows strictly from MLR via MIX_TIME limiting
             ! No additional procedural CCC needed - MIX_TIME limiting already handles combustion rate
             ! (Original FDS5: Q_NEW = Q_NEW * MIN(1, DT/MIX_TIME) in Q_BOUND_1 calculation)
@@ -413,7 +433,7 @@ CONVERT_CO: IF (CO_PRODUCTION) THEN
    !$OMP END SINGLE
 
    !$OMP DO COLLAPSE(3) PRIVATE(K,J,I,Y_O2_0,Y_CO_0,Z_2_MIN,DYCO,RHOX,X_FU_0,X_O2_0,X_FU,X_O2,ETRM) &
-   !$OMP PRIVATE(II,DX_FDT,X_FU_S,X_O2_S,X_FU_N,X_O2_N,Q_OLD,Q_NEW)
+    !$OMP PRIVATE(II,DX_FDT,X_FU_S,X_O2_S,X_FU_N,X_O2_N,Q_OLD,Q_NEW,CP,Q_DYN,UVW_ADV,D_TARGET,Q_DYN_REM,YY_GET)
    DO K=1,KBAR
       DO J=1,JBAR
          DO I=1,IBAR
@@ -469,8 +489,16 @@ CONVERT_CO: IF (CO_PRODUCTION) THEN
                ENDDO ODE_LOOP2
                DYCO = MIN(X_FU_0,X_FU_0 - X_FU)*MW_CO/RHOX*1.E6
             ENDIF
-             Q_OLD = Q(I,J,K)
-             Q_NEW = MIN(Q_UPPER-Q_OLD,DYCO*RHO(I,J,K)*HFAC_CO)*F_GOVERN
+              Q_OLD = Q(I,J,K)
+              Q_DYN_REM = Q_UPPER - Q_OLD
+              IF (DT_TARGET>0._EB) THEN ! R28x: тот же бюджет дивергенции для медленной CO-реакции
+                 UVW_ADV  = MAX(ABS(US(I,J,K))*RDX(I),ABS(VS(I,J,K))*RDY(J),ABS(WS(I,J,K))*RDZ(K))
+                 D_TARGET = MAX(0.1_EB, CFL_TARGET/DT_TARGET - UVW_ADV)
+                 YY_GET(:) = YY(I,J,K,:)
+                 CALL GET_AVERAGE_SPECIFIC_HEAT(YY_GET,CP,TMP(I,J,K))
+                 Q_DYN_REM = MIN(Q_DYN_REM, D_TARGET*RHO(I,J,K)*CP*TMP(I,J,K) - Q_OLD)
+              ENDIF
+              Q_NEW = MIN(MAX(0._EB,Q_DYN_REM),DYCO*RHO(I,J,K)*HFAC_CO)*F_GOVERN
             DYCO = Q_NEW/(RHO(I,J,K)*HFAC_CO*RN%Y_F_INLET) * F_TO_CO
             IF (YY(I,J,K,I_PROG_CO) - DYCO < Z_2_MIN) THEN
                Q_NEW = Q_NEW*(YY(I,J,K,I_PROG_CO)-Z_2_MIN)/DYCO
@@ -505,26 +533,48 @@ END SUBROUTINE COMBUSTION_MF
 
 SUBROUTINE COMBUSTION_FLAME_SHEET
 
-! R26 FLAME_SHEET (режим A): prescribed Q = q''*RAMP*A, размаз по КОНУСУ над
-! footprint (слой n расширяет footprint на n-1 колец чебышев — физичное
-! расплывание плюма; заполнение снизу вверх с капом FLAME_SHEET_QCAP, объём
-! конуса растёт до достаточного). Топливо конвертируется в products+soot в тех
-! же ячейках БЕЗ тепла (Q уже prescribed): интеграл сжигания = интеграл
-! впрыска -> ghost-накопление невозможно.
+ ! R26 FLAME_SHEET (режим A): prescribed Q = q''*RAMP*A, размаз по КОНУСУ над
+ ! footprint (слой n расширяет footprint на n-1 колец чебышев — физичное
+ ! расплывание плюма; заполнение снизу вверх с капом FLAME_SHEET_QCAP, объём
+ ! конуса растёт до достаточного). Топливо конвертируется в products+soot в тех
+ ! же ячейках БЕЗ тепла (Q уже prescribed): интеграл сжигания = интеграл
+ ! впрыска -> ghost-накопление невозможно.
+ ! R28s: слой n заполняется СПЛОШНЫМ ДИСКОМ радиуса n с параболическим
+ ! профилем W=1-0.5*(DD/(n+1))^2 (1 на оси, ~0.5 у края) вместо кольцевой
+ ! оболочки DD==n. Кольца давали полый конус: сеточные окна в дыме,
+ ! геометричные струи расширения, старт из изолированных точек (кейс 0106e472
+ ! против эталона FDS6). VL — эффективный объём (сумма W*V): суммарная
+ ! мощность и кап QCAP сохраняются точно.
+ ! R28t: диск заменён осесимметричным ГАУССОВЫМ ядром от центра очага:
+ ! q = sqrt(((x-xc)/ax)^2+((y-yc)/ay)^2), W=exp(-1.5*q^2), q<=1.8;
+ ! полуоси ax=RX0+n*d, ay=RY0+n*d растут с высотой слоя. Плоский верх
+ ! диска грел всю подошву равномерно и порождал 4 конвективные ячейки над
+ ! вентом (4 сгустка сажи, две доли выше) — гауссиана даёт один central
+ ! плюм с плавным спадом, как EDC-эталон FDS6. Учёт объёма/мощности тот же
+ ! (VL = сумма W*V, кап QCAP соблюдён).
 
 USE MATH_FUNCTIONS, ONLY: EVALUATE_RAMP
 USE PHYSICAL_FUNCTIONS, ONLY: GET_SPECIFIC_GAS_CONSTANT
-INTEGER :: NB,I,J,K,N2,KSTART,NL,IR,IMIN,IMAX,JMIN,JMAX,KLAST
+INTEGER :: NB,I,J,K,N2,KSTART,NL,NPMAX,IR,IMIN,IMAX,JMIN,JMAX,KLAST
+INTEGER :: ILO,IHI,JLO,JHI   ! R28t: индексные границы слоя (гауссово ядро)
 INTEGER :: QH,QT,QI,QJ,QK,NI,NJ,NK
 INTEGER, SAVE, DIMENSION(:,:), ALLOCATABLE :: FS_QUE
 LOGICAL, SAVE, DIMENSION(:,:,:), ALLOCATABLE :: FS_REACH
 LOGICAL, SAVE, DIMENSION(:,:,:), ALLOCATABLE :: FS_TX,FS_TY,FS_TZ
 INTEGER, SAVE, DIMENSION(3) :: FS_RDIM=0
 REAL(EB), SAVE, DIMENSION(:,:,:), ALLOCATABLE :: FS_QFILT  ! R28b: состояние τ-фильтра конуса
+REAL(EB), SAVE, DIMENSION(:,:,:), ALLOCATABLE :: FS_PBUF   ! R28u: буфер продуктов для разбавления
 INTEGER, SAVE, DIMENSION(4) :: FS_RDIMQ=0                  ! R28b: габариты+меш фильтра (сброс при смене меша)
+INTEGER :: II3,JJ3,KK3,NN2,NN3              ! R28u: стенсиль разбавления (II2/JJ2/KK2 уже объявлены)
+REAL(EB) :: B,W27(27),WSUM,WX3,WY3,WZ3        ! R28u
+INTEGER :: IDX27(3,27)                        ! R28u
 LOGICAL, SAVE :: FS_BLOCK_WARNED=.FALSE.
 INTEGER :: II2,JJ2,KK2
 REAL(EB) :: TSI,RAMPV,OX,OY,AOV,A_EFF,TGT,TOT_AOV,TGT_M,MFUEL,BFRAC,DYF,VC,VOL,REM,QC,VTOT,DD
+REAL(EB) :: WW   ! R28s: вес сглаженного ядра размещения тепла
+REAL(EB) :: XC0,YC0,RX0,RY0,DELC,AXN,AYN,QN   ! R28t: осесимметричное гауссово ядро
+REAL(EB), PARAMETER :: QMAX=2.4_EB,QPAR=0.7_EB ! R28v: шире ядро (элайнмент), срез по q<=2.4
+INTEGER,  ALLOCATABLE :: ILOR(:),IHIR(:),JLR(:),JHR(:)  ! R28t: границы слоёв
 REAL(EB) :: QAPL_SUM,ALPH   ! R28b: приложенная мощность конуса, коэффициент фильтра
 REAL(EB), ALLOCATABLE :: VL(:),VSUF(:)
 INTEGER,  ALLOCATABLE :: KL(:)
@@ -534,7 +584,13 @@ Q = 0._EB
 IF (N_FS_BURNERS==0) RETURN
 
 RN => REACTION(1)
-ALLOCATE(VL(0:KBAR+2),VSUF(0:KBAR+2),KL(0:KBAR+1))
+! R28q: LAYER_ENUM в режиме крышки наращивает NL по числу КОЛЕЦ, а не слоёв —
+! размер по KBAR мало: выход за границы KL/VL/VSUF коррумпировал кучу
+! (кейс 0106e472: BAD TERMINATION c0000374 на t=535 с). Оценка сверху:
+! KBAR вертикальных проходов + радиус колец до края меша.
+NPMAX = MAX(IBAR,JBAR) + KBAR + 4
+ALLOCATE(VL(0:NPMAX),VSUF(0:NPMAX+1),KL(0:NPMAX))
+ALLOCATE(ILOR(NPMAX),IHIR(NPMAX),JLR(NPMAX),JHR(NPMAX))
 
 BURNER_LOOP: DO NB=1,N_FS_BURNERS
 
@@ -588,17 +644,19 @@ BURNER_LOOP: DO NB=1,N_FS_BURNERS
       IF (VOL>0._EB .OR. KSTART>=KBAR) EXIT
       KSTART = KSTART + 1
    ENDDO
-     IF (ANY(FS_RDIM/=(/IBP1,JBP1,KBP1/))) THEN
-        IF (ALLOCATED(FS_REACH)) DEALLOCATE(FS_REACH)
-        IF (ALLOCATED(FS_TX)) DEALLOCATE(FS_TX)
-        IF (ALLOCATED(FS_TY)) DEALLOCATE(FS_TY)
-        IF (ALLOCATED(FS_TZ)) DEALLOCATE(FS_TZ)
-        IF (ALLOCATED(FS_QUE))  DEALLOCATE(FS_QUE)
-        ALLOCATE(FS_REACH(0:IBP1,0:JBP1,0:KBP1))
-        ALLOCATE(FS_TX(0:IBP1,0:JBP1,0:KBP1),FS_TY(0:IBP1,0:JBP1,0:KBP1),FS_TZ(0:IBP1,0:JBP1,0:KBP1))
-        ALLOCATE(FS_QUE(3,MAX(1,IBP1*JBP1*KBP1)))
-        FS_RDIM = (/IBP1,JBP1,KBP1/)
-     ENDIF
+      IF (ANY(FS_RDIM/=(/IBP1,JBP1,KBP1/))) THEN
+         IF (ALLOCATED(FS_REACH)) DEALLOCATE(FS_REACH)
+         IF (ALLOCATED(FS_TX)) DEALLOCATE(FS_TX)
+         IF (ALLOCATED(FS_TY)) DEALLOCATE(FS_TY)
+         IF (ALLOCATED(FS_TZ)) DEALLOCATE(FS_TZ)
+         IF (ALLOCATED(FS_QUE))  DEALLOCATE(FS_QUE)
+         IF (ALLOCATED(FS_PBUF)) DEALLOCATE(FS_PBUF)   ! R28u
+         ALLOCATE(FS_REACH(0:IBP1,0:JBP1,0:KBP1))
+         ALLOCATE(FS_TX(0:IBP1,0:JBP1,0:KBP1),FS_TY(0:IBP1,0:JBP1,0:KBP1),FS_TZ(0:IBP1,0:JBP1,0:KBP1))
+         ALLOCATE(FS_QUE(3,MAX(1,IBP1*JBP1*KBP1)))
+         ALLOCATE(FS_PBUF(0:IBP1,0:JBP1,0:KBP1))   ! R28u
+         FS_RDIM = (/IBP1,JBP1,KBP1/)
+      ENDIF
      ! R28b: буфер под состояние τ-фильтра (пересоздание при смене габаритов или меша)
      IF (ANY(FS_RDIMQ/=(/IBP1,JBP1,KBP1,NM/))) THEN
         IF (ALLOCATED(FS_QFILT)) DEALLOCATE(FS_QFILT)
@@ -688,49 +746,83 @@ BURNER_LOOP: DO NB=1,N_FS_BURNERS
    IF (FS_BURNERS(NB)%AREA_EQ>0._EB) A_EFF = FS_BURNERS(NB)%AREA_EQ
    TGT = FS_BURNERS(NB)%QPP*RAMPV*A_EFF
 
-   ! --- Перечисление слоёв конуса (снизу вверх) до достаточного объёма ---
-   ! R26g: полностью сплошной слой трактуется как крышка — конус НЕ проникает
-   ! сквозь неё в изолированные полости (кейс 46c08148: перечисление сквозь
-   ! плиту подшивного потолка грело однослойную полость над ней, тепловой
-   ! разгон замкнутой щели давал струи ~60 м/с и клин DT@~309 с). Кольца
-   ! продолжают расползаться в последнем газовом слое ПОД крышкой.
-   NL = 0
-   VTOT = 0._EB
-   KLAST = 0
-   LAYER_ENUM: DO
-      K = KSTART + NL
-      IF (K>KBAR) EXIT LAYER_ENUM
-      IF (FLAME_SHEET_HMAX>0._EB .AND. Z(K-1)>FS_BURNERS(NB)%ZV+FLAME_SHEET_HMAX) EXIT LAYER_ENUM
+    ! --- Перечисление слоёв конуса (снизу вверх) до достаточного объёма ---
+    ! R26g: полностью сплошной слой трактуется как крышка — конус НЕ проникает
+    ! сквозь неё в изолированные полости (кейс 46c08148: перечисление сквозь
+    ! плиту подшивного потолка грело однослойную полость над ней, тепловой
+    ! разгон замкнутой щели давал струи ~60 м/с и клин DT@~309 с). Кольца
+    ! продолжают расползаться в последнем газовом слое ПОД крышкой.
+    ! R28p: верх меша и граница FLAME_SHEET_HMAX — та же крышка (кейс 0106e472:
+    ! комната 3 м, конус заперт на 66 м³, q''' рос с кривой 1140 до 322 кВт/м³,
+    ! H-спайк ячейки над вентом гнал струю ~40-70 м/с и валит DT на t>280 с).
+    NL = 0
+    VTOT = 0._EB
+    ! R28t: параметры осесимметричного ядра — гауссиана от ЦЕНТРА очага
+    ! (нормированный эллиптический радиус, полуоси растут с высотой слоя).
+    ! Плоское ядро R28s грело всю подошву равномерно -> 4 конвективные ячейки
+    ! над вентом (4 стартовых сгустка сажи, две доли на z+1.5 м, кейс 0106e472).
+    XC0 = 0.5_EB*(FS_BURNERS(NB)%X1+FS_BURNERS(NB)%X2)
+    YC0 = 0.5_EB*(FS_BURNERS(NB)%Y1+FS_BURNERS(NB)%Y2)
+    RX0 = 0.5_EB*(FS_BURNERS(NB)%X2-FS_BURNERS(NB)%X1)
+    RY0 = 0.5_EB*(FS_BURNERS(NB)%Y2-FS_BURNERS(NB)%Y1)
+    DELC = 0.5_EB*(DX(IMIN)+DY(JMIN))
+    ILO = IMIN; IHI = IMAX; JLO = JMIN; JHI = JMAX
+
+     KLAST = 0
+     LAYER_ENUM: DO
+       K = KSTART + NL
+       IF (K>KBAR .OR. (FLAME_SHEET_HMAX>0._EB .AND. Z(K-1)>FS_BURNERS(NB)%ZV+FLAME_SHEET_HMAX)) THEN
+          IF (KLAST==0) EXIT LAYER_ENUM
+          K = KLAST   ! крышка: расползаться кольцами в последнем газовом слое
+       ENDIF
       IR = NL
+      AXN = RX0 + NL*DELC
+      AYN = RY0 + NL*DELC
+      DO WHILE (ILO>1 .AND. XC(ILO-1)>=XC0-QMAX*AXN)
+         ILO = ILO-1
+      ENDDO
+      DO WHILE (IHI<IBAR .AND. XC(IHI+1)<=XC0+QMAX*AXN)
+         IHI = IHI+1
+      ENDDO
+      DO WHILE (JLO>1 .AND. YC(JLO-1)>=YC0-QMAX*AYN)
+         JLO = JLO-1
+      ENDDO
+      DO WHILE (JHI<JBAR .AND. YC(JHI+1)<=YC0+QMAX*AYN)
+         JHI = JHI+1
+      ENDDO
       VOL = 0._EB
-       DO J=MAX(1,JMIN-IR),MIN(JBAR,JMAX+IR)
-          DO I=MAX(1,IMIN-IR),MIN(IBAR,IMAX+IR)
-             DD = MAX(IMIN-I,I-IMAX,JMIN-J,J-JMAX,0)
-             IF (DD/=IR) CYCLE
-             IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
-             IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h: только связанный с очагом газ
-             VOL = VOL + DX(I)*RC(I)*DY(J)*DZ(K)
-          ENDDO
-       ENDDO
-       IF (VOL<=0._EB .AND. KLAST>0) THEN
-          ! крышка: повторить то же кольцо в последнем газовом слое под ней
-          K = KLAST
-          DO J=MAX(1,JMIN-IR),MIN(JBAR,JMAX+IR)
-             DO I=MAX(1,IMIN-IR),MIN(IBAR,IMAX+IR)
-                DD = MAX(IMIN-I,I-IMAX,JMIN-J,J-JMAX,0)
-                IF (DD/=IR) CYCLE
-                IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
-                IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
-                VOL = VOL + DX(I)*RC(I)*DY(J)*DZ(K)
-             ENDDO
-          ENDDO
+        DO J=JLO,JHI
+           DO I=ILO,IHI
+              QN = SQRT(((XC(I)-XC0)/AXN)**2 + ((YC(J)-YC0)/AYN)**2)   ! R28t
+              IF (QN>QMAX) CYCLE
+              IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
+              IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h: только связанный с очагом газ
+              WW = EXP(-QPAR*QN*QN)
+              VOL = VOL + WW*DX(I)*RC(I)*DY(J)*DZ(K)
+           ENDDO
+        ENDDO
+        IF (VOL<=0._EB .AND. KLAST>0) THEN
+           ! крышка: повторить то же ядро в последнем газовом слое под ней
+           K = KLAST
+           DO J=JLO,JHI
+              DO I=ILO,IHI
+                 QN = SQRT(((XC(I)-XC0)/AXN)**2 + ((YC(J)-YC0)/AYN)**2)   ! R28t
+                 IF (QN>QMAX) CYCLE
+                 IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
+                 IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
+                 WW = EXP(-QPAR*QN*QN)
+                 VOL = VOL + WW*DX(I)*RC(I)*DY(J)*DZ(K)
+              ENDDO
+           ENDDO
          IF (VOL<=0._EB) EXIT LAYER_ENUM
       ELSEIF (VOL>0._EB) THEN
          KLAST = K
       ENDIF
-      NL = NL + 1
-      KL(NL) = K
-      VL(NL) = VOL
+        IF (NL>=NPMAX) EXIT LAYER_ENUM   ! R28q: страховка границы KL/VL
+        NL = NL + 1
+        KL(NL) = K
+        ILOR(NL) = ILO; IHIR(NL) = IHI; JLR(NL) = JLO; JHR(NL) = JHI   ! R28t
+       VL(NL) = VOL
       VTOT = VTOT + VOL
       IF (FLAME_SHEET_QCAP*VTOT>=TGT .AND. VOL>0._EB) EXIT LAYER_ENUM
    ENDDO LAYER_ENUM
@@ -744,42 +836,48 @@ BURNER_LOOP: DO NB=1,N_FS_BURNERS
          VSUF(N2) = VL(N2) + VSUF(N2+1)
       ENDDO
       REM = TGT
-      DO N2=1,NL
-         QC = MIN(FLAME_SHEET_QCAP,REM/MAX(VSUF(N2),1.E-12_EB))
-         K = KL(N2)
-         IR = N2 - 1
-          DO J=MAX(1,JMIN-IR),MIN(JBAR,JMAX+IR)
-             DO I=MAX(1,IMIN-IR),MIN(IBAR,IMAX+IR)
-                DD = MAX(IMIN-I,I-IMAX,JMIN-J,J-JMAX,0)
-                IF (DD/=IR) CYCLE
-                IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
-                IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
-                VC = DX(I)*RC(I)*DY(J)*DZ(K)
-                Q(I,J,K) = Q(I,J,K) + QC
-                MFUEL = MFUEL + RHO(I,J,K)*YY(I,J,K,I_FUEL)*RN%Y_F_INLET*VC
-             ENDDO
-          ENDDO
-          REM = REM - QC*VL(N2)
-       ENDDO
+       DO N2=1,NL
+          QC = MIN(FLAME_SHEET_QCAP,REM/MAX(VSUF(N2),1.E-12_EB))
+          K = KL(N2)
+          IR = N2 - 1
+          ILO=ILOR(N2); IHI=IHIR(N2); JLO=JLR(N2); JHI=JHR(N2)
+          AXN = RX0 + IR*DELC; AYN = RY0 + IR*DELC
+           DO J=JLO,JHI
+              DO I=ILO,IHI
+                 QN = SQRT(((XC(I)-XC0)/AXN)**2 + ((YC(J)-YC0)/AYN)**2)   ! R28t
+                 IF (QN>QMAX) CYCLE
+                 IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
+                 IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
+                 VC = DX(I)*RC(I)*DY(J)*DZ(K)
+                 WW = EXP(-QPAR*QN*QN)
+                 Q(I,J,K) = Q(I,J,K) + QC*WW
+                 MFUEL = MFUEL + RHO(I,J,K)*YY(I,J,K,I_FUEL)*RN%Y_F_INLET*VC
+              ENDDO
+           ENDDO
+           REM = REM - QC*VL(N2)
+        ENDDO
    ELSE
       ! деградация: весь объём конуса в меше исчерпан (низкое помещение)
       QC = TGT/VTOT
-      DO N2=1,NL
-         K = KL(N2)
-         IR = N2 - 1
-         DO J=MAX(1,JMIN-IR),MIN(JBAR,JMAX+IR)
-            DO I=MAX(1,IMIN-IR),MIN(IBAR,IMAX+IR)
-               DD = MAX(IMIN-I,I-IMAX,JMIN-J,J-JMAX,0)
-               IF (DD/=IR) CYCLE
-               IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
-               IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
-               VC = DX(I)*RC(I)*DY(J)*DZ(K)
-               Q(I,J,K) = Q(I,J,K) + QC
-               MFUEL = MFUEL + RHO(I,J,K)*YY(I,J,K,I_FUEL)*RN%Y_F_INLET*VC
-            ENDDO
-         ENDDO
-      ENDDO
-      IF (MYID==0 .AND. .NOT.FS_DEGRADE_WARNED) THEN
+       DO N2=1,NL
+          K = KL(N2)
+          IR = N2 - 1
+          ILO=ILOR(N2); IHI=IHIR(N2); JLO=JLR(N2); JHI=JHR(N2)
+          AXN = RX0 + IR*DELC; AYN = RY0 + IR*DELC
+          DO J=JLO,JHI
+             DO I=ILO,IHI
+                QN = SQRT(((XC(I)-XC0)/AXN)**2 + ((YC(J)-YC0)/AYN)**2)   ! R28t
+                IF (QN>QMAX) CYCLE
+                IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
+                IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
+                VC = DX(I)*RC(I)*DY(J)*DZ(K)
+                WW = EXP(-QPAR*QN*QN)
+                Q(I,J,K) = Q(I,J,K) + QC*WW
+                MFUEL = MFUEL + RHO(I,J,K)*YY(I,J,K,I_FUEL)*RN%Y_F_INLET*VC
+             ENDDO
+          ENDDO
+       ENDDO
+       IF (MYID==0 .AND. .NOT.FS_DEGRADE_WARNED) THEN
          WRITE(LU_OUTPUT,'(A,ES9.2,A)') ' WARNING: FLAME_SHEET cone volume exhausted, uniform Q=',QC, &
             ' W/m3 exceeds QCAP (room height limited by mesh top / solids)'
          FS_DEGRADE_WARNED = .TRUE.
@@ -797,17 +895,19 @@ BURNER_LOOP: DO NB=1,N_FS_BURNERS
     IF (FLAME_SHEET_TAU>0._EB) THEN
        ALPH = 1._EB - EXP(-DT/FLAME_SHEET_TAU)
        QAPL_SUM = 0._EB
-       DO N2=1,NL
-          K = KL(N2)
-          IR = N2 - 1
-          DO J=MAX(1,JMIN-IR),MIN(JBAR,JMAX+IR)
-             DO I=MAX(1,IMIN-IR),MIN(IBAR,IMAX+IR)
-                DD = MAX(IMIN-I,I-IMAX,JMIN-J,J-JMAX,0)
-                IF (DD/=IR) CYCLE
-                IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
-                IF (.NOT.FS_REACH(I,J,K)) CYCLE
-                VC = DX(I)*RC(I)*DY(J)*DZ(K)
-                FS_QFILT(I,J,K) = FS_QFILT(I,J,K) + ALPH*(Q(I,J,K)-FS_QFILT(I,J,K))
+        DO N2=1,NL
+           K = KL(N2)
+           IR = N2 - 1
+           ILO=ILOR(N2); IHI=IHIR(N2); JLO=JLR(N2); JHI=JHR(N2)
+           AXN = RX0 + IR*DELC; AYN = RY0 + IR*DELC
+           DO J=JLO,JHI
+              DO I=ILO,IHI
+                 QN = SQRT(((XC(I)-XC0)/AXN)**2 + ((YC(J)-YC0)/AYN)**2)   ! R28t
+                 IF (QN>QMAX) CYCLE
+                 IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
+                 IF (.NOT.FS_REACH(I,J,K)) CYCLE
+                 VC = DX(I)*RC(I)*DY(J)*DZ(K)
+                 FS_QFILT(I,J,K) = FS_QFILT(I,J,K) + ALPH*(Q(I,J,K)-FS_QFILT(I,J,K))
                 Q(I,J,K) = FS_QFILT(I,J,K)
                 QAPL_SUM = QAPL_SUM + Q(I,J,K)*VC
              ENDDO
@@ -818,31 +918,80 @@ BURNER_LOOP: DO NB=1,N_FS_BURNERS
     ENDIF
 
     ! --- Пассивная конверсия топлива по тем же слоям (доля BFRAC локального) ---
+    ! R28u: созданные продукты/сажа разносятся по стенсилю 3x3x3 с трёхлинейными
+    ! весами (имитация подсеточного элайнмента пламени). Компактное гауссово
+    ! ядро R28t трамбовало сажу в объём ядра: локальная плотность превышала
+    ! колено насыщения Бера-Ламберта (k*rho*dx>3) — дым визуально «глухой
+    ! монолит» без градиентов (кейс 0106e472 против эталона FDS6). Разбавление
+    ! ~8x по пику возвращает полупрозрачность; топливо расходуется там же, где
+    ! и раньше, суммарная масса продуктов/сажи не меняется (веса
+    ! ренормируются на солиды в стенсиле).
     TGT_M = QAPL_SUM*RN%Y_F_INLET*DT/RN%HEAT_OF_COMBUSTION
    BFRAC = MIN(1._EB, TGT_M/MAX(MFUEL,1.E-12_EB))
    IF (BFRAC>0._EB) THEN
-      DO N2=1,NL
-         K = KL(N2)
-         IR = N2 - 1
-          DO J=MAX(1,JMIN-IR),MIN(JBAR,JMAX+IR)
-             DO I=MAX(1,IMIN-IR),MIN(IBAR,IMAX+IR)
-                DD = MAX(IMIN-I,I-IMAX,JMIN-J,J-JMAX,0)
-                IF (DD/=IR) CYCLE
-                IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
-                IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
-                IF (YY(I,J,K,I_FUEL)<=1.E-10_EB) CYCLE
+      FS_PBUF = 0._EB
+       DO N2=1,NL
+          K = KL(N2)
+          IR = N2 - 1
+          ILO=ILOR(N2); IHI=IHIR(N2); JLO=JLR(N2); JHI=JHR(N2)
+          AXN = RX0 + IR*DELC; AYN = RY0 + IR*DELC
+           DO J=JLO,JHI
+              DO I=ILO,IHI
+                 QN = SQRT(((XC(I)-XC0)/AXN)**2 + ((YC(J)-YC0)/AYN)**2)   ! R28t
+                 IF (QN>QMAX) CYCLE
+                 IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
+                 IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
+                 IF (YY(I,J,K,I_FUEL)<=1.E-10_EB) CYCLE
                DYF = BFRAC*YY(I,J,K,I_FUEL)*RN%Y_F_INLET
                YY(I,J,K,I_FUEL) = YY(I,J,K,I_FUEL) - DYF
-               IF (SOOT_INDEX>0 .AND. I_PROG_SOOT>0) THEN
-                  YY(I,J,K,I_PROG_F)    = YY(I,J,K,I_PROG_F)    + DYF*(1._EB-RN%SOOT_YIELD)
-                  YY(I,J,K,I_PROG_SOOT) = YY(I,J,K,I_PROG_SOOT) + DYF*RN%SOOT_YIELD
-               ELSE
-                  YY(I,J,K,I_PROG_F)  = YY(I,J,K,I_PROG_F)  + DYF
-               ENDIF
+               FS_PBUF(I,J,K) = FS_PBUF(I,J,K) + DYF
             ENDDO
          ENDDO
       ENDDO
-   ENDIF
+      DO N2=1,NL
+         K = KL(N2)
+         IR = N2 - 1
+         ILO=ILOR(N2); IHI=IHIR(N2); JLO=JLR(N2); JHI=JHR(N2)
+         AXN = RX0 + IR*DELC; AYN = RY0 + IR*DELC
+          DO J=JLO,JHI
+             DO I=ILO,IHI
+                QN = SQRT(((XC(I)-XC0)/AXN)**2 + ((YC(J)-YC0)/AYN)**2)   ! R28t
+                IF (QN>QMAX) CYCLE
+                IF (SOLID(CELL_INDEX(I,J,K))) CYCLE
+                IF (.NOT.FS_REACH(I,J,K)) CYCLE   ! R26h
+                B = FS_PBUF(I,J,K)
+                IF (B<=1.E-12_EB) CYCLE
+                NN3 = 0; WSUM = 0._EB
+                DO KK3=-1,1
+                   DO JJ3=-1,1
+                      DO II3=-1,1
+                         II2 = I+II3; JJ2 = J+JJ3; KK2 = K+KK3
+                         IF (II2<1.OR.II2>IBAR.OR.JJ2<1.OR.JJ2>JBAR.OR.KK2<1.OR.KK2>KBAR) CYCLE
+                         IF (SOLID(CELL_INDEX(II2,JJ2,KK2))) CYCLE
+                         WX3 = 0.25_EB; IF (II3==0) WX3 = 0.5_EB
+                         WY3 = 0.25_EB; IF (JJ3==0) WY3 = 0.5_EB
+                         WZ3 = 0.25_EB; IF (KK3==0) WZ3 = 0.5_EB
+                         NN3 = NN3 + 1
+                         W27(NN3) = WX3*WY3*WZ3
+                         IDX27(1,NN3) = II2; IDX27(2,NN3) = JJ2; IDX27(3,NN3) = KK2
+                         WSUM = WSUM + W27(NN3)
+                      ENDDO
+                   ENDDO
+                ENDDO
+                IF (WSUM<=0._EB) CYCLE
+                DO NN2=1,NN3
+                   II2 = IDX27(1,NN2); JJ2 = IDX27(2,NN2); KK2 = IDX27(3,NN2)
+                   IF (SOOT_INDEX>0 .AND. I_PROG_SOOT>0) THEN
+                      YY(II2,JJ2,KK2,I_PROG_F)    = YY(II2,JJ2,KK2,I_PROG_F)    + B*W27(NN2)/WSUM*(1._EB-RN%SOOT_YIELD)
+                      YY(II2,JJ2,KK2,I_PROG_SOOT) = YY(II2,JJ2,KK2,I_PROG_SOOT) + B*W27(NN2)/WSUM*RN%SOOT_YIELD
+                   ELSE
+                      YY(II2,JJ2,KK2,I_PROG_F)  = YY(II2,JJ2,KK2,I_PROG_F)  + B*W27(NN2)/WSUM
+                   ENDIF
+                ENDDO
+             ENDDO
+          ENDDO
+       ENDDO
+    ENDIF
 
 ENDDO BURNER_LOOP
 
@@ -856,7 +1005,7 @@ DO K=1,KBAR
    ENDDO
 ENDDO
 
-DEALLOCATE(VL,VSUF,KL)
+DEALLOCATE(VL,VSUF,KL,ILOR,IHIR,JLR,JHR)
 
 END SUBROUTINE COMBUSTION_FLAME_SHEET
 

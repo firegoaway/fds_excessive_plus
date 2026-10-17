@@ -279,7 +279,10 @@ CONTROL_SELECT: SELECT CASE (CF%CONTROL_INDEX)
                T_CHANGE = T(CONTROL(CF%INPUT(1))%MESH) 
             ENDIF
       END SELECT
-      IF (STATE2) CORE_CLOCK = T_CHANGE
+      ! R28n: срабатывание по фронту входа — LATCH-CTRL после рестарта остаётся
+      ! взведённым и без фронта прижимал CORE_CLOCK к моменту срабатывания
+      ! каждый цикл: бесконечный перезапуск рестарт-дампов вместо счёта (R28m_test)
+      IF (STATE2 .AND. .NOT.CF%CURRENT_STATE) CORE_CLOCK = T_CHANGE
 
    CASE (EXTERNAL_GATE)
       ! FDS6/Fenix+ compatibility: EXTERNAL is controlled by external input file

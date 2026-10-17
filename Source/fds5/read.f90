@@ -10,6 +10,7 @@ USE MEMORY_FUNCTIONS, ONLY: ChkMemErr
 USE COMP_FUNCTIONS, ONLY: GET_INPUT_FILE
 USE MISC_FUNCTIONS, ONLY: SEARCH_CONTROLLER
 USE EVAC, ONLY: READ_EVAC
+USE EVACPLUS, ONLY: READ_EVAC_PLUS   ! R29a EVAC+
 USE HVAC_ROUTINES, ONLY: READ_HVAC
  
 IMPLICIT NONE
@@ -123,6 +124,7 @@ CALL READ_VENT
 CALL READ_REAC
 CALL READ_SPEC
 CALL READ_EVAC
+CALL READ_EVAC_PLUS   ! R29a: группы &EVPL/&EVHR/&EVSG/&EVEX/&EVCP (только при EVAC_PLUS=.TRUE.)
 CALL PROC_SPEC    ! Set up various SPECies constructs
 CALL READ_HVAC
 CALL PROC_PART    ! Set up various PARTicle constructs
@@ -365,6 +367,7 @@ END SUBROUTINE READ_HEAD
 SUBROUTINE READ_MESH
 
 INTEGER :: IJK(3),NM,NOM,CURRENT_MPI_PROCESS,MPI_PROCESS,RGB(3),LEVEL,N_MESH_NEW,N,II,JJ,KK,NMESHES_READ,NNN
+INTEGER :: MBASE,MEXTRA
 LOGICAL :: EVACUATION, EVAC_HUMANS, EMBEDDED
 REAL(EB) :: EVAC_Z_OFFSET,XB1,XB2,XB3,XB4,XB5,XB6
 CHARACTER(25) :: COLOR
@@ -515,11 +518,26 @@ MESH_LOOP: DO N=1,NMESHES_READ
             NM = NM + 1
 
             ! Determine which PROCESS to assign the MESH to
-            ! FDS6 compatibility: MPI_PROCESS parameter is read but ignored
-            ! Always use automatic distribution for optimal load balancing
+            ! R28o: непрерывные блоки вместо round-robin. Коллективы main.f90
+            ! (DT_SYNC, T, ACTIVE_MESH, CHANGE_TIME_STEP, I_MIN/I_MAX и др.)
+            ! шлют срезы DISPLS+1:DISPLS+COUNTS — корректно только при блочном
+            ! владении; round-robin подмешивал неинициализированные слоты, и
+            ! MINVAL(DT_SYNC) давал DT~1E-315 с крашем на шаге 1 (R28n_test).
+            ! MPI_PROCESS читается, но игнорируется (FDS6 compatibility).
 
-            IF (     USE_MPI) CURRENT_MPI_PROCESS = MOD(NM-1,NUMPROCS)
-            IF (.NOT.USE_MPI) CURRENT_MPI_PROCESS = 0
+            IF (.NOT.USE_MPI) THEN
+               CURRENT_MPI_PROCESS = 0
+            ELSE
+               MBASE  = NMESHES/NUMPROCS
+               MEXTRA = MOD(NMESHES,NUMPROCS)
+               IF (NM-1 < (MBASE+1)*MEXTRA) THEN
+                  CURRENT_MPI_PROCESS = (NM-1)/(MBASE+1)
+               ELSEIF (MBASE>0) THEN
+                  CURRENT_MPI_PROCESS = MEXTRA + (NM-1-(MBASE+1)*MEXTRA)/MBASE
+               ELSE
+                  CURRENT_MPI_PROCESS = NM-1
+               ENDIF
+            ENDIF
 
             ! Fill in MESH related variables
 
@@ -644,16 +662,212 @@ AUTO_EMBED_LOOP: DO NM=1,NMESHES
    ENDDO
 ENDDO AUTO_EMBED_LOOP
 
-! Find parent meshes for embedded meshes
+! R28l: наложения мешей, milestone 1 — пропуск мешей, полностью входящих в другой
+! меш с равным шагом по всем осям (эквивалент удаления строки &MESH), и контроль
+! конфигураций наложений. Равношаговые частичные наложения допускаются
+! (проверено прогоном кейса 73bcfa51 после ручного удаления дублирующих мешей).
+IF (EMBEDDED_MESH) THEN
+BLOCK
+   LOGICAL :: SKIP_MESH(NMESHES),IN_AB,IN_BA,EQ_STEP,STRICT_FACE
+   INTEGER :: NSKIP,NN,NINNER,NOUTER
+   REAL(EB) :: XTOL,RTOL,OX1,OX2,OY1,OY2,OZ1,OZ2
+   TYPE (MESH_TYPE), POINTER :: MA,MB,MI,MO
+   XTOL = 1.E-6_EB ! допуск совпадения координат, м
+   RTOL = 1.E-4_EB ! относительный допуск равенства шагов
+   SKIP_MESH = .FALSE.
 
+   ! пропуск: полное вхождение при равном шаге по всем осям
+   DO NM=1,NMESHES
+      IF (SKIP_MESH(NM) .OR. EVACUATION_ONLY(NM)) CYCLE
+      MA => MESHES(NM)
+      DO NOM=NM+1,NMESHES
+         IF (SKIP_MESH(NOM) .OR. EVACUATION_ONLY(NOM)) CYCLE
+         MB => MESHES(NOM)
+         IN_AB = MA%XS>=MB%XS-XTOL .AND. MA%XF<=MB%XF+XTOL .AND. &
+                 MA%YS>=MB%YS-XTOL .AND. MA%YF<=MB%YF+XTOL .AND. &
+                 MA%ZS>=MB%ZS-XTOL .AND. MA%ZF<=MB%ZF+XTOL
+         IN_BA = MB%XS>=MA%XS-XTOL .AND. MB%XF<=MA%XF+XTOL .AND. &
+                 MB%YS>=MA%YS-XTOL .AND. MB%YF<=MA%YF+XTOL .AND. &
+                 MB%ZS>=MA%ZS-XTOL .AND. MB%ZF<=MA%ZF+XTOL
+         IF (.NOT.IN_AB .AND. .NOT.IN_BA) CYCLE
+         EQ_STEP = ABS(MA%DXI-MB%DXI)<=RTOL*MAX(MA%DXI,MB%DXI) .AND. &
+                   ABS(MA%DETA-MB%DETA)<=RTOL*MAX(MA%DETA,MB%DETA) .AND. &
+                   ABS(MA%DZETA-MB%DZETA)<=RTOL*MAX(MA%DZETA,MB%DZETA)
+         IF (.NOT.EQ_STEP) CYCLE
+         ! внутренний меш избыточен; при взаимном вхождении — меш с большим номером
+         IF (IN_BA .AND. .NOT.IN_AB) THEN
+            SKIP_MESH(NOM) = .TRUE.
+            WRITE(LU_ERR,'(A,I6,A,I6,A)') 'INFO: R28l MESH ',NOM,' fully contained in MESH ',NM, &
+               ' with equal cell size - skipped'
+         ELSE
+            SKIP_MESH(NM) = .TRUE.
+            WRITE(LU_ERR,'(A,I6,A,I6,A)') 'INFO: R28l MESH ',NM,' fully contained in MESH ',NOM, &
+               ' with equal cell size - skipped'
+            EXIT
+         ENDIF
+      ENDDO
+   ENDDO
+
+   ! компакция массивов мешей после пропуска (перенумерация); R28l: массивы
+   ! пересоздаются под новый размер — маски/редукции в main должны совпадать по форме
+   NSKIP = COUNT(SKIP_MESH)
+   IF (NSKIP>0) THEN
+      IF (MYID==0) WRITE(LU_ERR,'(A,I6,A,I6,A)') 'INFO: R28l NMESHES ',NMESHES,' -> ',NMESHES-NSKIP,' (meshes renumbered)'
+      BLOCK
+         TYPE (MESH_TYPE), ALLOCATABLE :: MESHES_TMP(:)
+         INTEGER, ALLOCATABLE :: PROCESS_TMP(:)
+         CHARACTER(30), ALLOCATABLE :: MESH_NAME_TMP(:)
+         LOGICAL, ALLOCATABLE :: SYNC_TMP(:),CTS_TMP(:),EO_TMP(:),EG_TMP(:)
+         REAL(EB), ALLOCATABLE :: TUSED_TMP(:,:),EZO_TMP(:)
+         ALLOCATE(MESHES_TMP(NMESHES-NSKIP),STAT=IZERO)
+         CALL ChkMemErr('READ','MESHES_TMP',IZERO)
+         ALLOCATE(PROCESS_TMP(NMESHES-NSKIP),STAT=IZERO)
+         CALL ChkMemErr('READ','PROCESS_TMP',IZERO)
+         ALLOCATE(MESH_NAME_TMP(NMESHES-NSKIP),STAT=IZERO)
+         CALL ChkMemErr('READ','MESH_NAME_TMP',IZERO)
+         ALLOCATE(TUSED_TMP(N_TIMERS_DIM,NMESHES-NSKIP),STAT=IZERO)
+         CALL ChkMemErr('READ','TUSED_TMP',IZERO)
+         ALLOCATE(SYNC_TMP(NMESHES-NSKIP),CTS_TMP(NMESHES-NSKIP),EO_TMP(NMESHES-NSKIP),EG_TMP(NMESHES-NSKIP),STAT=IZERO)
+         CALL ChkMemErr('READ','EMB_COMPACT_TMP',IZERO)
+         ALLOCATE(EZO_TMP(NMESHES-NSKIP),STAT=IZERO)
+         CALL ChkMemErr('READ','EZO_TMP',IZERO)
+         NN = 0
+         DO NM=1,NMESHES
+            IF (SKIP_MESH(NM)) CYCLE
+            NN = NN + 1
+            MESHES_TMP(NN) = MESHES(NM)
+            PROCESS_TMP(NN) = PROCESS(NM)
+            MESH_NAME_TMP(NN) = MESH_NAME(NM)
+            TUSED_TMP(:,NN) = TUSED(:,NM)
+            SYNC_TMP(NN) = SYNC_TIME_STEP(NM)
+            CTS_TMP(NN) = CHANGE_TIME_STEP(NM)
+            EO_TMP(NN) = EVACUATION_ONLY(NM)
+            EG_TMP(NN) = EVACUATION_GRID(NM)
+            EZO_TMP(NN) = EVACUATION_Z_OFFSET(NM)
+         ENDDO
+         CALL MOVE_ALLOC(MESHES_TMP,MESHES)
+         CALL MOVE_ALLOC(PROCESS_TMP,PROCESS)
+         CALL MOVE_ALLOC(MESH_NAME_TMP,MESH_NAME)
+         CALL MOVE_ALLOC(TUSED_TMP,TUSED)
+         CALL MOVE_ALLOC(SYNC_TMP,SYNC_TIME_STEP)
+         CALL MOVE_ALLOC(CTS_TMP,CHANGE_TIME_STEP)
+         CALL MOVE_ALLOC(EO_TMP,EVACUATION_ONLY)
+         CALL MOVE_ALLOC(EG_TMP,EVACUATION_GRID)
+         CALL MOVE_ALLOC(EZO_TMP,EVACUATION_Z_OFFSET)
+      ENDBLOCK
+      NMESHES = NMESHES - NSKIP
+   ENDIF
+
+   ! контроль оставшихся конфигураций наложений
+   DO NM=1,NMESHES
+      IF (EVACUATION_ONLY(NM)) CYCLE
+      MA => MESHES(NM)
+      DO NOM=NM+1,NMESHES
+         IF (EVACUATION_ONLY(NOM)) CYCLE
+         MB => MESHES(NOM)
+         OX1 = MAX(MA%XS,MB%XS); OX2 = MIN(MA%XF,MB%XF)
+         OY1 = MAX(MA%YS,MB%YS); OY2 = MIN(MA%YF,MB%YF)
+         OZ1 = MAX(MA%ZS,MB%ZS); OZ2 = MIN(MA%ZF,MB%ZF)
+         IF (OX2-OX1<=XTOL .OR. OY2-OY1<=XTOL .OR. OZ2-OZ1<=XTOL) CYCLE ! нет пересечения объёма
+         IN_AB = MA%XS>=MB%XS-XTOL .AND. MA%XF<=MB%XF+XTOL .AND. &
+                 MA%YS>=MB%YS-XTOL .AND. MA%YF<=MB%YF+XTOL .AND. &
+                 MA%ZS>=MB%ZS-XTOL .AND. MA%ZF<=MB%ZF+XTOL
+         IN_BA = MB%XS>=MA%XS-XTOL .AND. MB%XF<=MA%XF+XTOL .AND. &
+                 MB%YS>=MA%YS-XTOL .AND. MB%YF<=MA%YF+XTOL .AND. &
+                 MB%ZS>=MA%ZS-XTOL .AND. MB%ZF<=MA%ZF+XTOL
+         EQ_STEP = ABS(MA%DXI-MB%DXI)<=RTOL*MAX(MA%DXI,MB%DXI) .AND. &
+                   ABS(MA%DETA-MB%DETA)<=RTOL*MAX(MA%DETA,MB%DETA) .AND. &
+                   ABS(MA%DZETA-MB%DZETA)<=RTOL*MAX(MA%DZETA,MB%DZETA)
+         IF (.NOT.IN_AB .AND. .NOT.IN_BA) THEN
+            ! частичное наложение
+            IF (EQ_STEP) THEN
+               WRITE(LU_ERR,'(A,I6,A,I6,A,6(F9.2,A))') 'WARNING: R28l MESH ',NM,' and MESH ',NOM, &
+                  ' partially overlap at XB=',OX1,',',OX2,',',OY1,',',OY2,',',OZ1,',',OZ2, &
+                  ' (equal cell size - tolerated)'
+            ELSE
+               WRITE(LU_ERR,'(A,I6,A,I6,A,6(F9.2,A))') 'ERROR: R28l MESH ',NM,' and MESH ',NOM, &
+                  ' partially overlap at XB=',OX1,',',OX2,',',OY1,',',OY2,',',OZ1,',',OZ2, &
+                  ' (different cell size - restructure MESH lines)'
+               WRITE(MESSAGE,'(A,I5,A,I5,A)') 'ERROR: MESH ',NM,' partially overlaps MESH ',NOM, &
+                  ' - see console for intersection XB'
+               CALL SHUTDOWN(MESSAGE)
+            ENDIF
+         ELSE
+            ! вхождение с разными шагами: выбираем внутренний меш
+            IF (IN_AB .AND. .NOT.IN_BA) THEN
+               NINNER = NM; NOUTER = NOM
+            ELSE
+               NINNER = NOM; NOUTER = NM
+            ENDIF
+            MI => MESHES(NINNER); MO => MESHES(NOUTER)
+            IF (MI%DXI>MO%DXI*(1._EB+RTOL) .OR. MI%DETA>MO%DETA*(1._EB+RTOL) .OR. &
+                MI%DZETA>MO%DZETA*(1._EB+RTOL)) THEN
+               WRITE(MESSAGE,'(A,I5,A,I5,A)') 'ERROR: embedded MESH ',NINNER,' is coarser than containing MESH ',NOUTER, &
+                  ' - refinement is required'
+               CALL SHUTDOWN(MESSAGE)
+            ENDIF
+            IF (MO%EMBEDDED_MESH_FLAG) THEN
+               WRITE(MESSAGE,'(A,I5,A,I5,A)') 'ERROR: embedded MESH ',NINNER,' is inside embedded MESH ',NOUTER, &
+                  ' (multi-level embedding is not supported)'
+               CALL SHUTDOWN(MESSAGE)
+            ENDIF
+            STRICT_FACE = MI%XS>MO%XS+XTOL .OR. MI%XF<MO%XF-XTOL .OR. &
+                          MI%YS>MO%YS+XTOL .OR. MI%YF<MO%YF-XTOL .OR. &
+                          MI%ZS>MO%ZS+XTOL .OR. MI%ZF<MO%ZF+XTOL
+            IF (.NOT.STRICT_FACE) THEN
+               WRITE(MESSAGE,'(A,I5,A,I5,A)') 'ERROR: embedded MESH ',NINNER,' must be strictly inside MESH ',NOUTER, &
+                  ' on at least one face'
+               CALL SHUTDOWN(MESSAGE)
+            ENDIF
+         ENDIF
+      ENDDO
+   ENDDO
+ENDBLOCK
+ENDIF
+
+! R28l: поиск родителей после компакции (номера мешей уже финальные)
 DO NM=1,NMESHES
    IF (.NOT.MESHES(NM)%EMBEDDED_MESH_FLAG) CYCLE
    MESHES(NM)%PARENT_MESH = FIND_PARENT_MESH(NM)
    IF (MESHES(NM)%PARENT_MESH == 0) THEN
-      WRITE(MESSAGE,'(A,I3)') 'WARNING: No parent mesh found for embedded MESH ',NM
+      WRITE(MESSAGE,'(A,I3,A)') 'ERROR: no parent mesh for embedded MESH ',NM, &
+         ' (multi-level embedding is not supported)'
       CALL SHUTDOWN(MESSAGE)
    ENDIF
 ENDDO
+
+! R28l: milestone 2 — контроль выравнивания граней ребёнка на сетку родителя
+! и целочисленности кратностей по осям (включая 1 м -> 0.25 м напрямую)
+IF (EMBEDDED_MESH) THEN
+BLOCK
+   REAL(EB) :: FR(6),DR(3)
+   TYPE (MESH_TYPE), POINTER :: MC,MP
+   DO NM=1,NMESHES
+      IF (.NOT.MESHES(NM)%EMBEDDED_MESH_FLAG) CYCLE
+      NOM = MESHES(NM)%PARENT_MESH
+      MC => MESHES(NM); MP => MESHES(NOM)
+      FR(1) = (MC%XS-MP%XS)/MP%DXI
+      FR(2) = (MC%XF-MP%XS)/MP%DXI
+      FR(3) = (MC%YS-MP%YS)/MP%DETA
+      FR(4) = (MC%YF-MP%YS)/MP%DETA
+      FR(5) = (MC%ZS-MP%ZS)/MP%DZETA
+      FR(6) = (MC%ZF-MP%ZS)/MP%DZETA
+      IF (ANY(ABS(FR-REAL(NINT(FR),EB))>1.E-3_EB)) THEN
+         WRITE(MESSAGE,'(A,I5,A,I5,A)') 'ERROR: faces of embedded MESH ',NM, &
+            ' are not aligned to the grid of parent MESH ',NOM,' - adjust IJK or XB'
+         CALL SHUTDOWN(MESSAGE)
+      ENDIF
+      DR(1) = MP%DXI/MC%DXI
+      DR(2) = MP%DETA/MC%DETA
+      DR(3) = MP%DZETA/MC%DZETA
+      IF (ANY(ABS(DR-REAL(NINT(DR),EB))>1.E-3_EB) .OR. ANY(NINT(DR)<1)) THEN
+         WRITE(MESSAGE,'(A,I5,A,I5,A)') 'ERROR: cell size ratio of embedded MESH ',NM, &
+            ' to parent MESH ',NOM,' is not an integer; adjust IJK/XB'
+         CALL SHUTDOWN(MESSAGE)
+      ENDIF
+   ENDDO
+ENDBLOCK
+ENDIF
 
 ! Min and Max values of temperature
  
@@ -1267,7 +1481,7 @@ LOGICAL :: PRESSURE_CORRECTION=.FALSE.
 INTEGER :: MAX_LEAK_PATHS=0
 REAL(EB) :: MINIMUM_ZONE_VOLUME=1._EB
 NAMELIST /MISC/ PR,SC,TMPA,GVEC,PRESSURE_RELAX_FACTOR,RELAXATION_FACTOR,FYI, &
-                CSMAG,RAMP_GX,RAMP_GY,RAMP_GZ,BAROCLINIC, &
+                CSMAG,RAMP_GX,RAMP_GY,RAMP_GZ,BAROCLINIC,DT_TARGET,CFL_TARGET, &
                 LAPSE_RATE,ISOTHERMAL, &
                 P_INF,SURF_DEFAULT,EVAC_SURF_DEFAULT, &
                 C_FORCED,C_FORCED_CYLINDER,C_FORCED_SPHERE,C_VERTICAL,C_HORIZONTAL,H_FIXED, &
@@ -1280,7 +1494,7 @@ NAMELIST /MISC/ PR,SC,TMPA,GVEC,PRESSURE_RELAX_FACTOR,RELAXATION_FACTOR,FYI, &
                 CO_PRODUCTION,SOOT_DEPOSITION,TEXTURE_ORIGIN,NSTRATA, &
                 THICKEN_OBSTRUCTIONS,PARTICLE_CFL_MAX, &
                 EVAC_PRESSURE_ITERATIONS,EVAC_TIME_ITERATIONS,EVACUATION_MC_MODE, &
-                EVACUATION_DRILL, NO_EVACUATION, &
+                EVACUATION_DRILL, NO_EVACUATION, EVAC_PLUS, &
                 PRESSURE_CORRECTION,CHECK_POISSON,STRATIFICATION,RESTART_CHID,PARTICLE_CFL, &
                 CFL_MAX,CFL_MIN,VN_MAX,VN_MIN,SOLID_PHASE_ONLY,SMOKE_ALBEDO,GROUND_LEVEL,CFL_DP_SCALE, &
                  DT_GUARD,DT_GUARD_MASS,DT_GUARD_MAX,FLAME_SHEET,FLAME_SHEET_QCAP,FLAME_SHEET_HMAX,FLAME_SHEET_TAU, &
@@ -1376,10 +1590,15 @@ EVAC_TIME_ITERATIONS     = 50
 EVACUATION_MC_MODE       = .FALSE.
 NO_EVACUATION            = .FALSE.
 EVACUATION_DRILL         = .FALSE.
+EVAC_PLUS                = .FALSE.   ! R29a EVAC+
 
 ! LES parameters
  
-CSMAG                = 0.4_EB  ! Smagorinsky constant
+CSMAG                = 0.4_EB  ! R28z: возврат 0.4 (валидировано до 562 с, DT 0.065-0.25, кейс 0106e472@0.5м).
+                                       ! Эксперимент R28y (0.2, дефолт FDS6): Numerical Instability на t=273.8 с —
+                                       ! в 4 раза ниже подсеточная вязкость -> медленнее смешение -> накопление топлива
+                                       ! -> взрыв бародиффузионного члена дивергенции (divg.f90, DEL_RHO_D_DEL_Y).
+                                       ! Подозрение ментора №1 снято: 0.4 шаг не душил, кислородный лимит работал.
 PR                   = -1.0_EB  ! Turbulent Prandtl number
 SC                   = -1.0_EB  ! Turbulent Schmidt number
  
@@ -1401,6 +1620,8 @@ RUN_AVG_FAC          = 0.5
 THICKEN_OBSTRUCTIONS = .FALSE.
 CFL_MAX              = 1.0_EB       ! Stability bounds
 CFL_MIN              = 0.8_EB
+DT_TARGET            = -1._EB       ! R28x: <0 = авто, 0 = выкл
+CFL_TARGET           = 0.8_EB       ! R28x: целевое CFL динамического предела Q
 VN_MAX               = 1.0_EB
 VN_MIN               = 0.8_EB
 CFL_DP_SCALE         = 1.0_EB       ! масштаб DP-члена (дивергенции) в CFL-норме; <1 — быстрый грубый режим
@@ -1409,12 +1630,12 @@ CFL_DP_SCALE         = 1.0_EB       ! масштаб DP-члена (диверг
                                     ! требуют DT~0.005, кэп 0.01 их не спасает и latch разрушает физику
 DT_GUARD_MASS         = 2.0_EB      ! R22: порог запаса, кг
  DT_GUARD_MAX          = 0.01_EB    ! R22: кэп DT при активном страже, с
- FLAME_SHEET           = .TRUE.     ! R28f: режим A (prescribed Q) — основной на любой сетке;
-                                    ! EDC (FLAME_SHEET=.FALSE.) — только для DNS-расчётов
- FLAME_SHEET_QCAP      = 500._EB    ! R26: потолок объёмной плотности тепла, кВт/м3 (переводится в Вт/м3)
- FLAME_SHEET_HMAX      = 0._EB      ! R26: лимит высоты колонны над горелкой, м (0 = без лимита)
- FLAME_SHEET_TAU       = 0._EB      ! R28b: тепловая буферизация конуса, с (0 = выкл; рычаг 2 из плана §5)
- FLAME_SHEET_RT        = -1._EB     ! R28h: <0 = адаптивный режим, 0 = выкл (поведение R28e), >0 = фиксированный C (R28f)
+  FLAME_SHEET           = .FALSE.    ! R28w (откат, владелец 24.09): EDC — основной режим;
+                                     ! режим A (prescribed Q) — только явным &MISC (deprecated)
+  FLAME_SHEET_QCAP      = 500._EB    ! R26: потолок объёмной плотности тепла, кВт/м3 (переводится в Вт/м3)
+  FLAME_SHEET_HMAX      = 0._EB      ! R26: лимит высоты колонны над горелкой, м (0 = без лимита)
+  FLAME_SHEET_TAU       = 0._EB      ! R28b: тепловая буферизация конуса, с (0 = выкл; рычаг 2 из плана §5)
+  FLAME_SHEET_RT        = 0._EB      ! R28r/R28w: по умолчанию ВЫКЛ — турбулентность оригинального FDS 5.5.3
  FLAME_SHEET_RT_LMAX   = 1.0_EB     ! R28h: кап физической полосы подавления (м) адаптивного режима
                                     ! C_eff = clip(min(R_TARGET,(LMAX/2d)^1.5)/7.87, 0.1, 0.9); R_TARGET=2.0
  AUTO_ZONE             = .FALSE.    ! R28: cut-зоны запаркованы (NI @25-27 c в c45daa57); строгие карманы остаются
@@ -1834,10 +2055,18 @@ ID = 'null'
       CYCLE COUNT_SPEC_LOOP
    ENDIF
    
-   ! Skip FDS6-style species (LUMPED_COMPONENT_ONLY, BACKGROUND, or mixtures with SPEC_ID)
-   IF (LUMPED_COMPONENT_ONLY .OR. BACKGROUND .OR. COPY_LUMPED .OR. PRIMITIVE) THEN
-      ! But if this species has a MW, save it as a potential fuel species
-      IF (MW > 0._EB .AND. N_FUEL_SPEC < MAX_FUEL_SPEC) THEN
+    ! Skip FDS6-style species (LUMPED_COMPONENT_ONLY, BACKGROUND, or mixtures with SPEC_ID)
+    IF (LUMPED_COMPONENT_ONLY .OR. BACKGROUND .OR. COPY_LUMPED .OR. PRIMITIVE) THEN
+       ! R28j: состав люмп-AIR (BACKGROUND-смесь) для O2-стехиометрии SPEC_ID_NU
+       IF (BACKGROUND .AND. SPEC_ID(1)/='null' .AND. AIR_LUMP_XMW_SUM<=0._EB) THEN
+          DO I=1,100
+             IF (SPEC_ID(I)=='null' .OR. SPEC_ID(I)==' ') CYCLE
+             AIR_LUMP_XMW_SUM = AIR_LUMP_XMW_SUM + VOLUME_FRACTION(I)*GET_STANDARD_SPEC_MW(TRIM(SPEC_ID(I)))
+             IF (TRIM(SPEC_ID(I))=='OXYGEN') AIR_LUMP_X_O2 = VOLUME_FRACTION(I)
+          ENDDO
+       ENDIF
+       ! But if this species has a MW, save it as a potential fuel species
+       IF (MW > 0._EB .AND. N_FUEL_SPEC < MAX_FUEL_SPEC) THEN
          N_FUEL_SPEC = N_FUEL_SPEC + 1
          FUEL_SPEC_ID(N_FUEL_SPEC) = ID
          FUEL_SPEC_MW(N_FUEL_SPEC) = MW
@@ -2134,7 +2363,17 @@ ELSE
    ENDIF
 ENDIF
 
+! R28j: ненормированная молярная масса люмп-смеси (конвенция Fenix: NU·MW сходится по массе)
+PRODUCTS_MW_SUM = 0._EB
+DO I = 1, NC
+   PRODUCTS_MW_SUM = PRODUCTS_MW_SUM + VOL_FRAC(I)*COMP_MW(I)
+ENDDO
+
 N_PRODUCTS_COMP = NC
+PRODUCTS_H2O_COMP = 0
+DO I = 1, NC
+   IF (TRIM(PRODUCTS_COMP_ID(I))=='WATER VAPOR') PRODUCTS_H2O_COMP = I
+ENDDO
 
 ! Diagnostic output
 WRITE(LU_OUTPUT,'(A,I0,A)') 'INFO: Extracted ',NC,' components from PRODUCTS mixture'
@@ -2176,20 +2415,82 @@ END SELECT
 END FUNCTION GET_STANDARD_SPEC_MW
 
 
+SUBROUTINE REAC_PRESCAN_FENIX
+
+! R28j: предварительный скан &SPEC для READ_REAC (выполняется раньше READ_SPEC — порядок FDS5).
+! Заполняет PRODUCTS_COMP_*/PRODUCTS_MW_SUM (смесь PRODUCTS), AIR_LUMP_* (люмп-AIR)
+! и FUEL_SPEC_* (MW топливной SPEC) до построения state-системы смеси.
+
+REAL(EB) :: MW,MASS_FRACTION_0,SIGMALJ,EPSILONKLJ,XVAP,VISCOSITY,CONDUCTIVITY,DIFFUSIVITY, &
+            MASS_EXTINCTION_COEFFICIENT,SPECIFIC_HEAT,SPECIFIC_ENTHALPY,REFERENCE_TEMPERATURE,H_V,CL
+REAL(EB) :: VOLUME_FRACTION(100),MASS_FRACTION_FDS6(100)
+INTEGER :: I,IOS_PRE
+LOGICAL :: LUMPED_COMPONENT_ONLY,BACKGROUND,COPY_LUMPED,PRIMITIVE,ABSORBING
+CHARACTER(60) :: SPEC_ID(100),FYI
+CHARACTER(30) :: FORMULA,ID
+NAMELIST /SPEC/ MASS_FRACTION_0,MW,FYI,ID,SIGMALJ,EPSILONKLJ,CONDUCTIVITY,VISCOSITY,DIFFUSIVITY,ABSORBING, &
+                   MASS_EXTINCTION_COEFFICIENT,FORMULA,SPECIFIC_HEAT,SPECIFIC_ENTHALPY,REFERENCE_TEMPERATURE, &
+                   LUMPED_COMPONENT_ONLY,BACKGROUND,COPY_LUMPED,PRIMITIVE, &
+                   SPEC_ID,VOLUME_FRACTION,MASS_FRACTION_FDS6,CL
+
+REWIND(LU_INPUT)
+PRE_LOOP: DO
+   CALL CHECKREAD('SPEC',LU_INPUT,IOS_PRE)
+   IF (IOS_PRE==1) EXIT PRE_LOOP
+   ID = 'null'
+   MW = 0._EB
+   CL = 0._EB
+   LUMPED_COMPONENT_ONLY = .FALSE.
+   BACKGROUND = .FALSE.
+   COPY_LUMPED = .FALSE.
+   PRIMITIVE = .FALSE.
+   SPEC_ID = 'null'
+   VOLUME_FRACTION = 0._EB
+   MASS_FRACTION_FDS6 = 0._EB
+   READ(LU_INPUT,NML=SPEC,END=111,ERR=112,IOSTAT=IOS_PRE)
+   GOTO 113
+   111 EXIT PRE_LOOP
+   112 CYCLE PRE_LOOP
+   113 CONTINUE
+   IF (BACKGROUND .AND. SPEC_ID(1)/='null' .AND. AIR_LUMP_XMW_SUM<=0._EB) THEN
+      DO I=1,100
+         IF (SPEC_ID(I)=='null' .OR. SPEC_ID(I)==' ') CYCLE
+         AIR_LUMP_XMW_SUM = AIR_LUMP_XMW_SUM + VOLUME_FRACTION(I)*GET_STANDARD_SPEC_MW(TRIM(SPEC_ID(I)))
+         IF (TRIM(SPEC_ID(I))=='OXYGEN') AIR_LUMP_X_O2 = VOLUME_FRACTION(I)
+      ENDDO
+   ENDIF
+   IF (.NOT.(LUMPED_COMPONENT_ONLY .OR. BACKGROUND .OR. COPY_LUMPED .OR. PRIMITIVE)) THEN
+      IF (SPEC_ID(1)/='null') THEN
+         IF (N_PRODUCTS_COMP==0) CALL EXTRACT_PRODUCTS_COMPONENTS(SPEC_ID,VOLUME_FRACTION,MASS_FRACTION_FDS6)
+      ELSEIF (MW>0._EB .AND. N_FUEL_SPEC<MAX_FUEL_SPEC) THEN
+         N_FUEL_SPEC = N_FUEL_SPEC + 1
+         FUEL_SPEC_ID(N_FUEL_SPEC)  = ID
+         FUEL_SPEC_MW(N_FUEL_SPEC)  = MW
+         FUEL_SPEC_CL(N_FUEL_SPEC)  = CL
+      ENDIF
+   ENDIF
+ENDDO PRE_LOOP
+REWIND(LU_INPUT)
+
+END SUBROUTINE REAC_PRESCAN_FENIX
+
+
 SUBROUTINE READ_REAC
 
 CHARACTER(30) :: FUEL,OXIDIZER
 CHARACTER(60) :: SPEC_ID_NU(MAX_SPECIES)
 LOGICAL :: IDEAL
-INTEGER :: NN,N_REAC_READ
+INTEGER :: NN,N_Reac_Read,I
 REAL(EB) :: Y_F_INLET, &
-            H2_YIELD,SOOT_YIELD,CO_YIELD, Y_F_LFL,X_O2_LL,EPUMO2,BOF,&
+            H2_YIELD,SOOT_YIELD,CO_YIELD, Y_F_LFL,X_O2_LL,EPUMO2,BOF, &
             CRITICAL_FLAME_TEMPERATURE,HEAT_OF_COMBUSTION,NU(MAX_SPECIES),E,N_S(MAX_SPECIES),C,H,N,O,OTHER, &
             FUEL_HEAT_OF_FORMATION,AIT,MW_FUEL, &
             COMBUSTION_COMPLETENESS,CHI_R_REAC,RADIATIVE_FRACTION,HOC_COMPLETE, &
             FUEL_C_TO_CO_FRACTION,FUEL_H_TO_H2_FRACTION,FUEL_N_TO_HCN_FRACTION, &
             LOWER_OXYGEN_LIMIT,HCL_YIELD,HCN_YIELD,CL=0._EB, &
-            C_TMP,H_TMP,O_TMP,MW_FUEL_TMP
+            C_TMP,H_TMP,O_TMP,MW_FUEL_TMP, &
+            NU_F_FENIX=0._EB,NU_AIR_FENIX=0._EB,R_PROD_FENIX=0._EB,MW_FUEL_TMP_SAVE=0._EB, &
+            HCL_YIELD_FENIX=0._EB,Y_O2_FENIX=0._EB,MASS_IN_FENIX=0._EB,MASS_OUT_FENIX=0._EB
 NAMELIST /REAC/ E,BOF,HEAT_OF_COMBUSTION,FYI,FUEL,OXIDIZER,EPUMO2,ID, N_S,&
                 Y_O2_INFTY,Y_F_INLET, &
                 H2_YIELD,SOOT_YIELD,CO_YIELD,Y_F_LFL,X_O2_LL,CRITICAL_FLAME_TEMPERATURE,NU,SOOT_H_FRACTION, &
@@ -2202,6 +2503,10 @@ NAMELIST /REAC/ E,BOF,HEAT_OF_COMBUSTION,FYI,FUEL,OXIDIZER,EPUMO2,ID, N_S,&
  
 N_REACTIONS = 0
 REWIND(LU_INPUT)
+
+! R28j: &SPEC читается ПОСЛЕ &REAC (порядок FDS5) — извлекаем PRODUCTS/AIR/топливо
+! предварительным сканом, чтобы выходы методики были известны при построении state-системы
+CALL REAC_PRESCAN_FENIX
 
 COUNT_REAC_LOOP: DO
    ID   = 'null'
@@ -2346,7 +2651,39 @@ READ_REACTION_LOOP: DO NN=1,N_REAC_READ
    RN%NAME               = ID
    RN%FUEL               = FUEL        
    RN%OXIDIZER           = OXIDIZER
-ENDDO READ_REACTION_LOOP
+ ENDDO READ_REACTION_LOOP
+ 
+! R28j (Fenix+ / SPEC_ID_NU): выходы продуктов из строки &SPEC ID='PRODUCTS'.
+! Y_i = x_i·MW_i/(|NU_1|·MW_fuel) [кг/кг топлива]; заменяет дефолты FDS5 (SOOT_YIELD=0.01,
+! пропан-формула C=3/H=8), которые не отражают методику владельца.
+IF (SPEC_ID_NU(1)/='null' .AND. N_PRODUCTS_COMP>0) THEN
+   MW_FUEL_TMP = 0._EB
+   DO I = 1, N_FUEL_SPEC
+      IF (TRIM(FUEL_SPEC_ID(I))==TRIM(SPEC_ID_NU(1))) MW_FUEL_TMP = FUEL_SPEC_MW(I)
+   ENDDO
+   IF (MW_FUEL_TMP<=0._EB) THEN
+      DO I = 1, N_SPECIES
+         IF (TRIM(SPECIES(I)%ID)==TRIM(SPEC_ID_NU(1))) MW_FUEL_TMP = SPECIES(I)%MW
+      ENDDO
+   ENDIF
+   IF (MW_FUEL_TMP>0._EB .AND. PRODUCTS_MW_SUM>0._EB .AND. ABS(NU(1))>0._EB) THEN
+      SPEC_ID_NU_ACTIVE = .TRUE.
+      MW_FUEL_TMP_SAVE  = MW_FUEL_TMP
+      NU_F_FENIX        = ABS(NU(1))
+      NU_AIR_FENIX      = ABS(NU(2))
+      R_PROD_FENIX      = PRODUCTS_MW_SUM/(NU_F_FENIX*MW_FUEL_TMP)   ! кг продуктов / кг топлива
+      DO I = 1, N_PRODUCTS_COMP
+         PRODUCTS_COMP_YIELD(I) = PRODUCTS_COMP_MASS_FRAC(I)*R_PROD_FENIX
+         IF (TRIM(PRODUCTS_COMP_ID(I))=='SOOT')              SOOT_YIELD = PRODUCTS_COMP_YIELD(I)
+         IF (TRIM(PRODUCTS_COMP_ID(I))=='CARBON MONOXIDE')   CO_YIELD   = PRODUCTS_COMP_YIELD(I)
+         IF (TRIM(PRODUCTS_COMP_ID(I))=='HYDROGEN CHLORIDE') THEN
+            HCL_YIELD_FENIX = PRODUCTS_COMP_YIELD(I)
+            OTHER = MAX(OTHER, 1.E-6_EB)   ! резерв состояния HCl; точное значение — после MW_FUEL
+         ENDIF
+      ENDDO
+      SOOT_H_FRACTION = 0._EB              ! сажа методики — углерод
+   ENDIF
+ENDIF
 
 IF (H < ZERO_P) THEN
    SOOT_H_FRACTION = 0._EB
@@ -2370,8 +2707,10 @@ SET_MIXTURE_FRACTION: IF (MIXTURE_FRACTION) THEN
    CALL ChkMemErr('READ','MF_SPEC_FORMULA',IZERO)
    ALLOCATE(MF_MW(N_STATE_SPECIES),STAT=IZERO)
    CALL ChkMemErr('READ','MF_MW',IZERO)
-   MW_FUEL = C * MW_C + H * MW_H + O * MW_O + N * MW_N + OTHER * MW_OTHER
-   MF_SPEC_ID(1) = 'FUEL'
+    MW_FUEL = C * MW_C + H * MW_H + O * MW_O + N * MW_N + OTHER * MW_OTHER
+    ! R28j: точный HCl-выход через OTHER-канал (Y_HCl = OTHER·MW_HCl/MW_FUEL)
+    IF (SPEC_ID_NU_ACTIVE .AND. HCL_YIELD_FENIX>0._EB) OTHER = HCL_YIELD_FENIX*MW_FUEL/MW_HCl
+    MF_SPEC_ID(1) = 'FUEL'
    MF_SPEC_FORMULA(1) = 'F'
    MF_MW(1) = MW_FUEL
    FUEL_INDEX = 1
@@ -2601,7 +2940,35 @@ REACTION%MW_OTHER        = MW_OTHER
    RN%HEAT_OF_COMBUSTION = 0._EB   
    RN%EPUMO2             = 0._EB      
    RN%IDEAL              = .TRUE.
-ENDIF SET_MIXTURE_FRACTION
+ ENDIF SET_MIXTURE_FRACTION
+ 
+! R28j: O2-стехиометрия из люмп-AIR (Y_O2 = |NU_2|·x_O2·MW_O2/(|NU_1|·MW_fuel));
+! замыкание массы продуктов через H2O; нормировка трассера для выводимых компонентов.
+IF (SPEC_ID_NU_ACTIVE .AND. AIR_LUMP_XMW_SUM>0._EB .AND. MW_FUEL_TMP_SAVE>0._EB) THEN
+   Y_O2_FENIX = NU_AIR_FENIX*AIR_LUMP_X_O2*MW_O2/(NU_F_FENIX*MW_FUEL_TMP_SAVE)
+   REACTION(1)%NU(O2_INDEX) = Y_O2_FENIX*REACTION(1)%MW_FUEL/MW_O2
+   REACTION(1)%O2_F_RATIO   = Y_O2_FENIX
+   IF (CO_PRODUCTION .AND. N_REACTIONS>=2) THEN
+      REACTION(2)%NU(O2_INDEX) = REACTION(1)%NU(O2_INDEX)
+      REACTION(2)%O2_F_RATIO   = Y_O2_FENIX
+   ENDIF
+   MASS_IN_FENIX  = REACTION(1)%MW_FUEL + REACTION(1)%NU(O2_INDEX)*MW_O2
+   MASS_OUT_FENIX = 0._EB
+   DO NN = 4, N_STATE_SPECIES
+      IF (H2_INDEX>0 .AND. NN==H2_INDEX) CYCLE
+      IF (H2O_INDEX>0 .AND. NN==H2O_INDEX) CYCLE   ! H2O — балансирующий член
+      MASS_OUT_FENIX = MASS_OUT_FENIX + REACTION(1)%NU(NN)*MF_MW(NN)
+   ENDDO
+   IF (H2O_INDEX>0 .AND. MASS_IN_FENIX>MASS_OUT_FENIX) &
+      REACTION(1)%NU(H2O_INDEX) = REACTION(1)%NU(H2O_INDEX) + (MASS_IN_FENIX-MASS_OUT_FENIX)/MW_H2O
+   PRODUCTS_TRACER_RATIO = MASS_IN_FENIX/REACTION(1)%MW_FUEL
+   WRITE(LU_OUTPUT,'(A)') ' R28j: SPEC_ID_NU — выходы продуктов из PRODUCTS (кг/кг топлива):'
+   DO NN = 1, N_PRODUCTS_COMP
+      WRITE(LU_OUTPUT,'(A,A,A,ES10.3)') '   ',TRIM(PRODUCTS_COMP_ID(NN)),': ',PRODUCTS_COMP_YIELD(NN)
+   ENDDO
+   WRITE(LU_OUTPUT,'(A,ES10.3,A,ES10.3,A,ES10.3)') ' R28j: O2_F_RATIO = ',Y_O2_FENIX, &
+      ' кг/кг; трассер продуктов = ',PRODUCTS_TRACER_RATIO,' кг/кг; SOOT_YIELD = ',REACTION(1)%SOOT_YIELD
+ENDIF
 
 ! Set the lower limit of the extinction coefficient
 
@@ -5485,12 +5852,24 @@ PROCESS_SURF_LOOP: DO N=0,N_SURF
          SF%ADJUST_BURN_RATE(I_FUEL) = ML%ADJUST_BURN_RATE(1,I_FUEL)
          SF%MASS_FLUX(I_FUEL)        = SF%MASS_FLUX(I_FUEL)/SF%ADJUST_BURN_RATE(I_FUEL)
       ENDIF
-       SF%TAU(I_FUEL)        = SF%TAU(TIME_HEAT)
-       SF%RAMP_MF(I_FUEL)    = SF%RAMP_Q
-       SF%RAMP_INDEX(I_FUEL) = SF%RAMP_INDEX(TIME_HEAT) 
-       ! BUG#11: максимальная поверхностная тепловая мощность прописанного очага (W/m2)
-       IF (N_REACTIONS>0) HRRPUA_MAX = MAX(HRRPUA_MAX, SF%HRRPUA, SF%MLRPUA*REACTION(1)%HEAT_OF_COMBUSTION)
-    ENDIF BURNING_IF
+        SF%TAU(I_FUEL)        = SF%TAU(TIME_HEAT)
+        SF%RAMP_MF(I_FUEL)    = SF%RAMP_Q
+        SF%RAMP_INDEX(I_FUEL) = SF%RAMP_INDEX(TIME_HEAT) 
+        ! BUG#11: максимальная поверхностная тепловая мощность прописанного очага (W/m2)
+        ! R28x: учитываем максимум рампы газоотдачи (кейс 0106e472: HRRPUA=1.02e6 кВт/м2
+        ! с RAMP max ~6e-4 => эффективные ~610 кВт/м2 — НЕ экстремальный сценарий).
+        BLOCK
+           REAL(EB) :: RAMP_FAC
+           INTEGER :: NRAMP
+           RAMP_FAC = 1._EB
+           NRAMP = SF%RAMP_INDEX(I_FUEL)
+           IF (NRAMP > 0) THEN
+              RAMP_FAC = MAXVAL(RAMPS(NRAMP)%DEPENDENT_DATA(1:RAMPS(NRAMP)%NUMBER_DATA_POINTS))
+           ENDIF
+           IF (N_REACTIONS>0) HRRPUA_MAX = MAX(HRRPUA_MAX, SF%HRRPUA*RAMP_FAC, &
+              SF%MLRPUA*RAMP_FAC*REACTION(1)%HEAT_OF_COMBUSTION)
+        ENDBLOCK
+     ENDIF BURNING_IF
 
    ! Compute surface density
 
@@ -5640,14 +6019,26 @@ PROCESS_SURF_LOOP: DO N=0,N_SURF
  ! (2) глобальный губернатор HRR (main.f90): HRR <= 1.15*MLR_глоб*Hc, рост <= 1x/с;
  ! (3) EDC-дроссель unmixedness в fire.f90 (ZETA_STORE) — рост горения в ячейке
  !     ограничен скоростью смешения, детонация/фантомное Q невозможны.
- IF (HRRPUA_MAX>0._EB) THEN
+  IF (HRRPUA_MAX>0._EB) THEN
     ! дефолт FDS6 = 200 кВт/м2; пользователь может задать меньше через &MISC
     ! HRRPUA_SHEET (кВт/м2) — смягчает концентрацию тепла над горелкой,
     ! снижает DP/струю в ячейках пламени -> крупнее DT в разгонной фазе
-    IF (HRRPUA_SHEET<=0._EB) HRRPUA_SHEET = 200000._EB
-    GOVERN_HRR = .TRUE.
-    GOV_HOC    = REACTION(1)%HEAT_OF_COMBUSTION
- ENDIF
+     IF (HRRPUA_SHEET<=0._EB) HRRPUA_SHEET = 200000._EB
+     GOVERN_HRR = .TRUE.
+     GOV_HOC    = REACTION(1)%HEAT_OF_COMBUSTION
+     ! R28x: авто-включение динамического предела Q для экстремальных HRRPUA (>3 МВт/м2):
+     ! впрыск такого масштаба создаёт дивергенцию, обрушающую шаг; предел q_dyn
+     ! растягивает выгорание, не ломая физику (O2, угасание, несмешанность).
+     IF (DT_TARGET<0._EB) THEN
+        IF (HRRPUA_MAX>3.E6_EB) THEN
+           DT_TARGET = 0.05_EB
+           WRITE(LU_OUTPUT,'(A,F5.2,A,ES10.3,A)') ' NOTE(R28x): dynamic Q limit enabled: DT_TARGET=0.05 s, CFL_TARGET=', &
+              CFL_TARGET,' (auto, HRRPUA_MAX=',HRRPUA_MAX,' W/m2)'
+        ELSE
+           DT_TARGET = 0._EB
+        ENDIF
+     ENDIF
+  ENDIF
   
  END SUBROUTINE PROC_SURF_2
 
@@ -11593,6 +11984,10 @@ ENDIF
 IF (SPEC_ID/='null' .AND. SPEC_INDEX==0) THEN
    DO NS=1,N_STATE_SPECIES
       IF (SPEC_ID==MF_SPEC_ID(NS)) THEN
+         ! R28k: продукты (NS>=4) при SPEC_ID_NU-входе — через трассер PRODUCTS (методика).
+         ! Сажа — исключение: берём свободный вид (транспорт/турбулентная структура),
+         ! трассер в конусе насыщается стехиометрическим капом и рисует монолитный конус.
+         IF (SPEC_ID_NU_ACTIVE .AND. NS>=4 .AND. NS/=SOOT_INDEX .AND. N_PRODUCTS_COMP>0) CYCLE
          SPEC_INDEX = -NS
          EXIT
       ENDIF
@@ -12239,12 +12634,12 @@ DO NOM = 1, NMESHES
    IF (MC%XS >= MP%XS .AND. MC%XF <= MP%XF .AND. &
        MC%YS >= MP%YS .AND. MC%YF <= MP%YF .AND. &
        MC%ZS >= MP%ZS .AND. MC%ZF <= MP%ZF) THEN
-      ! Pick the smallest enclosing mesh (highest resolution parent)
+      ! R28l: pick the finest enclosing parent (smallest cell volume)
       IF (NM_PARENT == 0) THEN
          NM_PARENT = NOM
       ELSE
-         ! Prefer parent with smaller cell size (larger IJK)
-         IF (MP%IBAR > MESHES(NM_PARENT)%IBAR) NM_PARENT = NOM
+         IF (MP%DXI*MP%DETA*MP%DZETA < &
+             MESHES(NM_PARENT)%DXI*MESHES(NM_PARENT)%DETA*MESHES(NM_PARENT)%DZETA) NM_PARENT = NOM
       ENDIF
    ENDIF
 ENDDO

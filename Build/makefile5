@@ -76,7 +76,7 @@ endif
 
 obj_mpi5 = prec.obj cons.obj type.obj mesh.obj func.obj pois.obj turb.obj irad.obj radi.obj \
            scrc.obj smvv.obj mpip.obj isob.obj devc.obj cut_face.obj \
-           part.obj vege.obj ctrl.obj ieva.obj evac.obj hvac.obj \
+           part.obj vege.obj ctrl.obj ieva.obj evac.obj evac_plus.obj hvac.obj \
            mass.obj wall.obj fire.obj velo.obj pres.obj \
            init.obj dump.obj read.obj divg.obj main.obj
 
@@ -106,6 +106,8 @@ setup_win:
 	$(CCOMPL) -c $(CFLAGS) $<
 
 # Files which have OpenMP compiler directives
+# EVACOMP задаётся на уровне целей ниже (etap 4 EVAC+); FOPENMPFLAGS для
+# целей fds5_* не определён — спящие директивы остальных файлов не активируются
 divg.obj: FFLAGS += $(FOPENMPFLAGS)
 func.obj: FFLAGS += $(FOPENMPFLAGS)
 mass.obj: FFLAGS += $(FOPENMPFLAGS)
@@ -115,6 +117,7 @@ velo.obj: FFLAGS += $(FOPENMPFLAGS)
 radi.obj: FFLAGS += $(FOPENMPFLAGS)
 wall.obj: FFLAGS += $(FOPENMPFLAGS)
 main.obj: FFLAGS += $(FOPENMPFLAGS)
+evac_plus.obj: FFLAGS += $(EVACOMP)
 
 divg.o: FFLAGS += $(FOPENMPFLAGS)
 func.o: FFLAGS += $(FOPENMPFLAGS)
@@ -125,37 +128,40 @@ velo.o: FFLAGS += $(FOPENMPFLAGS)
 radi.o: FFLAGS += $(FOPENMPFLAGS)
 wall.o: FFLAGS += $(FOPENMPFLAGS)
 main.o: FFLAGS += $(FOPENMPFLAGS)
+evac_plus.o: FFLAGS += $(EVACOMP)
 
 # Windows Intel Fortran Compiler and Intel MPI
 
 fds5_impi_intel_win : MPILIB = "$(I_MPI_ROOT)\lib\impi.lib"
 fds5_impi_intel_win : MPIINCLUDE = "$(I_MPI_ROOT)\include\mpi"
 fds5_impi_intel_win : FFLAGS = -D_WIN32 /Qipo /O2 /I$(MPIINCLUDE) /wrap-margin- $(GITINFO) $(FFLAGSMKL)
+fds5_impi_intel_win : EVACOMP = /Qopenmp
 fds5_impi_intel_win : FCOMPL = ifx
 fds5_impi_intel_win : CCOMPL = icx
 fds5_impi_intel_win : CFLAGS = -D_WIN32 -Dpp_noappend /O2 $(GITINFO)
 fds5_impi_intel_win : obj = fds5_impi_intel_win
 fds5_impi_intel_win : setup_win $(obj_mpi5)
-	$(FCOMPL) -o $(obj).exe $(FFLAGS) /F1000000000 $(obj_mpi5) $(MPILIB) $(LFLAGSMKL_INTEL)
+	$(FCOMPL) -o $(obj).exe $(FFLAGS) $(EVACOMP) /F1000000000 $(obj_mpi5) $(MPILIB) $(LFLAGSMKL_INTEL)
 
 fds5_impi_intel_win_db : MPILIB = "$(I_MPI_ROOT)\lib\impi.lib"
 fds5_impi_intel_win_db : MPIINCLUDE = "$(I_MPI_ROOT)\include\mpi"
 fds5_impi_intel_win_db : FFLAGS = -D_WIN32 /Od /nologo /debug:all /I$(MPIINCLUDE) /Z7 /extend-source:132 /warn:unused /traceback /check:all /wrap-margin- $(GITINFO) $(FFLAGSMKL)
+fds5_impi_intel_win_db : EVACOMP = /Qopenmp
 fds5_impi_intel_win_db : FCOMPL = ifx
 fds5_impi_intel_win_db : CCOMPL = icx
 fds5_impi_intel_win_db : CFLAGS = -D_WIN32 -Dpp_noappend /Od /Z7 /nologo $(GITINFO)
 fds5_impi_intel_win_db : obj = fds5_impi_intel_win_db
 fds5_impi_intel_win_db : setup_win $(obj_mpi5)
-	$(FCOMPL) -o $(obj).exe $(FFLAGS) /F1000000000 $(obj_mpi5) $(MPILIB) $(LFLAGSMKL_INTEL)
+	$(FCOMPL) -o $(obj).exe $(FFLAGS) $(EVACOMP) /F1000000000 $(obj_mpi5) $(MPILIB) $(LFLAGSMKL_INTEL)
 
 # Linux Intel Fortran Compiler and Intel MPI
-
 fds5_impi_intel_linux : FFLAGS = -O2 -ipo -no-wrap-margin $(GITINFO) $(FFLAGSMKL) -DUSE_IFPORT
+fds5_impi_intel_linux : EVACOMP = -qopenmp
 fds5_impi_intel_linux : LFLAGSMKL = $(LFLAGSMKL_INTEL)
 fds5_impi_intel_linux : FCOMPL = $(COMP_FC)
 fds5_impi_intel_linux : obj = fds5_impi_intel_linux
 fds5_impi_intel_linux : setup $(obj_mpi5_unix)
-	$(FCOMPL) $(FFLAGS) -o $(obj) $(obj_mpi5_unix) $(LFLAGSMKL)
+	$(FCOMPL) $(FFLAGS) $(EVACOMP) -o $(obj) $(obj_mpi5_unix) $(LFLAGSMKL)
 
 # *** Object Dependencies ***
 
@@ -185,6 +191,8 @@ ctrl.obj : prec.obj cons.obj type.obj mesh.obj func.obj
 ctrl.o : prec.o cons.o type.o mesh.o func.o
 evac.obj : func.obj prec.obj cons.obj type.obj mesh.obj ctrl.obj ieva.obj
 evac.o : func.o prec.o cons.o type.o mesh.o ctrl.o ieva.o
+evac_plus.obj : func.obj prec.obj cons.obj type.obj mesh.obj
+evac_plus.o : func.o prec.o cons.o type.o mesh.o
 ieva.obj : func.obj prec.obj cons.obj type.obj mesh.obj
 ieva.o : func.o prec.o cons.o type.o mesh.o
 hvac.obj : func.obj prec.obj cons.obj type.obj mesh.obj ctrl.obj
@@ -203,12 +211,12 @@ init.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj radi.obj pois.o
 init.o : func.o prec.o cons.o type.o mesh.o devc.o radi.o pois.o pres.o cut_face.o
 dump.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj smvv.obj turb.obj radi.obj scrc.obj fire.obj
 dump.o : func.o prec.o cons.o type.o mesh.o devc.o smvv.o turb.o radi.o scrc.o fire.o
-read.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj ctrl.obj radi.obj hvac.obj scrc.obj mass.obj
-read.o : func.o prec.o cons.o type.o mesh.o devc.o ctrl.o radi.o hvac.o scrc.o mass.o
+read.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj ctrl.obj radi.obj hvac.obj scrc.obj mass.obj evac.obj evac_plus.obj
+read.o : func.o prec.o cons.o type.o mesh.o devc.o ctrl.o radi.o hvac.o scrc.o mass.o evac.o evac_plus.o
 divg.obj : func.obj prec.obj cons.obj type.obj mesh.obj mass.obj cut_face.obj
 divg.o : func.o prec.o cons.o type.o mesh.o mass.o cut_face.o
-main.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj smvv.obj mass.obj divg.obj velo.obj wall.obj fire.obj radi.obj part.obj vege.obj dump.obj read.obj init.obj pres.obj pois.obj ctrl.obj turb.obj hvac.obj evac.obj ieva.obj scrc.obj mpip.obj
-main.o : func.o prec.o cons.o type.o mesh.o devc.o smvv.o mass.o divg.o velo.o wall.o fire.o radi.o part.o vege.o dump.o read.o init.o pres.o pois.o ctrl.o turb.o hvac.o evac.o ieva.o scrc.o mpip.o
+main.obj : func.obj prec.obj cons.obj type.obj mesh.obj devc.obj smvv.obj mass.obj divg.obj velo.obj wall.obj fire.obj radi.obj part.obj vege.obj dump.obj read.obj init.obj pres.obj pois.obj ctrl.obj turb.obj hvac.obj evac.obj evac_plus.obj ieva.obj scrc.obj mpip.obj
+main.o : func.o prec.o cons.o type.o mesh.o devc.o smvv.o mass.o divg.o velo.o wall.o fire.o radi.o part.o vege.o dump.o read.o init.o pres.o pois.o ctrl.o turb.o hvac.o evac.o evac_plus.o ieva.o scrc.o mpip.o
 scrc.obj : func.obj prec.obj cons.obj type.obj mesh.obj pois.obj
 scrc.o : func.o prec.o cons.o type.o mesh.o pois.o
 smvv.obj : func.obj prec.obj cons.obj
