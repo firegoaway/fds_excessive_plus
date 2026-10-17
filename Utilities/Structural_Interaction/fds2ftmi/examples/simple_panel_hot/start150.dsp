@@ -1,3 +1,0 @@
-PSCR,COLOR,2
-PLOT,ALL
-finish
