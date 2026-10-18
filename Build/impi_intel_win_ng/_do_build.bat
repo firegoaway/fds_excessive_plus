@@ -1,0 +1,6 @@
+@echo off
+call "D:\Intel\oneAPI\setvars.bat" intel64
+cd /d "E:\FIREGOAWAY\GitHub\FDS_source\FIREMODELS\fds\Build\impi_intel_win_ng"
+make SHELL="%ComSpec%" VPATH="../../Source/fds5ng" -f ..\makefile5ng fds5_impi_intel_win
+echo BUILD_EXIT_CODE=%errorlevel%
+pause
