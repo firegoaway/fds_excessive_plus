@@ -1,0 +1,8 @@
+*.exe
+*.obj
+*.mod
+*.dll
+*.pdb
+*.log
+build_log.txt
+link_log.txt
