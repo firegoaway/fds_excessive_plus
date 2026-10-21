@@ -1216,8 +1216,8 @@ ELSE
    STOP_STATUS = PROCESS_STOP_STATUS
 ENDIF
 
-CALL MPI_FINALIZE(IERR)
-
+! R30 fix: MPI_FINALIZE moved AFTER all I/O and chain logic to prevent access violation
+! during file close/chain operations on finalized MPI communicator
 IF (MYID==0) THEN
    SELECT CASE(STOP_STATUS)
       CASE(NO_STOP)
@@ -1259,16 +1259,28 @@ IF (MYID==0) THEN
         WRITE(LU_OUTPUT,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
         CALL CHAIN_CLOSE_UNITS
         CALL CHAIN_EXEC
-        STOP
+        ! R30 fix: Do NOT call MPI_FINALIZE or STOP here.
+        ! Fall through to the common barrier/finalize block below
+        ! so all ranks can synchronize before exiting.
      ENDIF
   ELSE
      CALL CHAIN_CLEAN
   ENDIF
-  CALL SHUTDOWN(MESSAGE)
+  ! R30 fix: Do NOT call SHUTDOWN here — it contains STOP which kills rank 0
+  ! before non-zero ranks reach MPI_BARRIER, causing BAD TERMINATION.
+  ! Instead, write message directly and let all ranks synchronize below.
+  WRITE(LU_ERR,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
+  WRITE(LU_OUTPUT,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
 ENDIF
 
-STOP
-
+! R30 fix: Synchronize ALL ranks before MPI_FINALIZE to prevent access violation
+IF (USE_MPI) THEN
+   CALL MPI_BARRIER(MPI_COMM_WORLD,IERR)
+   CALL MPI_FINALIZE(IERR)
+ENDIF
+! Do NOT call STOP here — after MPI_FINALIZE the runtime is torn down
+! and STOP may trigger access violation on some Intel MPI versions.
+! Returning from END_FDS lets main.f90 reach its own clean STOP.
 END SUBROUTINE END_FDS
 
 ! R29h (FDS6/Fenix+): цепочка авто-рестарта — маркер CHID.chain
@@ -1459,6 +1471,9 @@ SUBROUTINE EXCHANGE_DIVERGENCE_INFO
 
 ! Exchange information mesh to mesh needed for divergence integrals
 ! First, sum DSUM, PSUM and USUM over all meshes controlled by the active process, then reduce over all processes
+
+USE GLOBAL_CONSTANTS
+USE MESH_VARIABLES
 
 INTEGER :: IPZ,IOPZ,IOPZ2
 REAL(EB) :: TNOW

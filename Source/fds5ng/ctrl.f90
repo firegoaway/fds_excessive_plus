@@ -274,7 +274,14 @@ CONTROL_SELECT: SELECT CASE (CF%CONTROL_INDEX)
       END SELECT
       ! R29b (донор R28n): срабатывание по фронту входа — LATCH-CTRL после рестарта без
       ! фронта прижимал CORE_CLOCK к моменту срабатывания каждый цикл (бесконечный перезапуск)
-      IF (STATE2 .AND. .NOT.CF%CURRENT_STATE) CORE_CLOCK = T_CHANGE
+      ! R30 fix: CORE_CLOCK is allocatable array(NMESHES), scalar assignment causes access violation
+      IF (STATE2 .AND. .NOT.CF%CURRENT_STATE) THEN
+         IF (CF%MESH > 0 .AND. CF%MESH <= NMESHES) THEN
+            CORE_CLOCK(CF%MESH) = T_CHANGE
+         ELSE
+            CORE_CLOCK(:) = T_CHANGE
+         ENDIF
+      ENDIF
 
    CASE (EXTERNAL_GATE)
       ! R29b (совместимость FDS6/Fenix+): EXTERNAL управляется внешним CSV-файлом
