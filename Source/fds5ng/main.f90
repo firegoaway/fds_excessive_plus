@@ -1207,6 +1207,8 @@ END SUBROUTINE CORRECT_PRESSURE
 SUBROUTINE END_FDS
 
 ! End the calculation gracefully, even if there is an error
+! R30 fix: Simplified to match FDS6 pattern — no custom chain/restart logic
+! that caused rank desynchronization and access violation in MPI mode.
 
 CHARACTER(100) :: MESSAGE
 
@@ -1216,14 +1218,11 @@ ELSE
    STOP_STATUS = PROCESS_STOP_STATUS
 ENDIF
 
-! R30 fix: MPI_FINALIZE moved AFTER all I/O and chain logic to prevent access violation
-! during file close/chain operations on finalized MPI communicator
 IF (MYID==0) THEN
    SELECT CASE(STOP_STATUS)
       CASE(NO_STOP)
          WRITE(MESSAGE,'(A)') 'STOP: FDS completed successfully'
          IF (STATUS_FILES) CLOSE(LU_NOTREADY,STATUS='DELETE')
-         ! R29p (донор R28x): удаление .end — сигнал успешного завершения (Fenix+)
          BLOCK
             LOGICAL :: EX_END
             INQUIRE(FILE=FN_END,EXIST=EX_END)
@@ -1232,55 +1231,40 @@ IF (MYID==0) THEN
                CLOSE(LU_END,STATUS='DELETE')
             ENDIF
          END BLOCK
-      CASE(INSTABILITY_STOP) 
+      CASE(INSTABILITY_STOP)
          WRITE(MESSAGE,'(A)') 'STOP: Numerical Instability'
-      CASE(USER_STOP) 
+      CASE(USER_STOP)
          WRITE(MESSAGE,'(A)') 'STOP: FDS stopped by user'
-     CASE(SETUP_STOP) 
-        WRITE(MESSAGE,'(A)') 'STOP: FDS was improperly set-up'
-     CASE(CTRL_STOP) ! R29p (донор R28x/FDS6): KILL-CTRL = успешное завершение для Fenix+
-        WRITE(MESSAGE,'(A)') 'STOP: FDS was stopped by KILL control function and completed successfully'
-        ! R29p (донор R28x): удаление .end — сигнал успешного завершения (Fenix+)
-        BLOCK
-           LOGICAL :: EX_END
-           INQUIRE(FILE=FN_END,EXIST=EX_END)
-           IF (EX_END) THEN
-              OPEN(LU_END,FILE=FN_END,FORM='UNFORMATTED',STATUS='OLD')
-              CLOSE(LU_END,STATUS='DELETE')
-           ENDIF
-        END BLOCK
-  END SELECT
-  ! R29h (FDS6/Fenix+): авто-рестарт цепочки после KILL (RESTART-CTRL уже дампнул
-  ! рестарт-файлы). SHUTDOWN завершает процесс — перезапуск до него.
-  ! R29p: авто-цепочка вооружается как для USER_STOP, так и для CTRL_STOP (KILL-контроль)
-  IF (STOP_STATUS==USER_STOP .OR. STOP_STATUS==CTRL_STOP) THEN
-     IF (CHAIN_ARMED()) THEN
-        WRITE(LU_ERR,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
-        WRITE(LU_OUTPUT,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
-        CALL CHAIN_CLOSE_UNITS
-        CALL CHAIN_EXEC
-        ! R30 fix: Do NOT call MPI_FINALIZE or STOP here.
-        ! Fall through to the common barrier/finalize block below
-        ! so all ranks can synchronize before exiting.
-     ENDIF
-  ELSE
-     CALL CHAIN_CLEAN
-  ENDIF
-  ! R30 fix: Do NOT call SHUTDOWN here — it contains STOP which kills rank 0
-  ! before non-zero ranks reach MPI_BARRIER, causing BAD TERMINATION.
-  ! Instead, write message directly and let all ranks synchronize below.
-  WRITE(LU_ERR,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
-  WRITE(LU_OUTPUT,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
+      CASE(SETUP_STOP)
+         WRITE(MESSAGE,'(A)') 'STOP: FDS was improperly set-up'
+      CASE(CTRL_STOP)
+         WRITE(MESSAGE,'(A)') 'STOP: FDS was stopped by KILL control function and completed successfully'
+         BLOCK
+            LOGICAL :: EX_END
+            INQUIRE(FILE=FN_END,EXIST=EX_END)
+            IF (EX_END) THEN
+               OPEN(LU_END,FILE=FN_END,FORM='UNFORMATTED',STATUS='OLD')
+               CLOSE(LU_END,STATUS='DELETE')
+            ENDIF
+         END BLOCK
+      CASE DEFAULT
+         WRITE(MESSAGE,'(A)') 'STOP: Unknown stop status'
+   END SELECT
+   WRITE(LU_ERR,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
+   WRITE(LU_OUTPUT,'(/A,A,A,A)') TRIM(MESSAGE),' (CHID: ',TRIM(CHID),')'
 ENDIF
 
-! R30 fix: Synchronize ALL ranks before MPI_FINALIZE to prevent access violation
+! Synchronize ALL ranks before MPI_FINALIZE (FDS6 pattern)
 IF (USE_MPI) THEN
    CALL MPI_BARRIER(MPI_COMM_WORLD,IERR)
    CALL MPI_FINALIZE(IERR)
 ENDIF
-! Do NOT call STOP here — after MPI_FINALIZE the runtime is torn down
-! and STOP may trigger access violation on some Intel MPI versions.
-! Returning from END_FDS lets main.f90 reach its own clean STOP.
+
+! R30 fix: Do NOT call STOP here after MPI_FINALIZE.
+! On Intel MPI, STOP triggers runtime teardown that causes access violation
+! when the process exits. Returning from END_FDS lets main program reach
+! its own clean implicit STOP without touching finalized MPI internals.
+RETURN
 END SUBROUTINE END_FDS
 
 ! R29h (FDS6/Fenix+): цепочка авто-рестарта — маркер CHID.chain
@@ -1474,7 +1458,6 @@ SUBROUTINE EXCHANGE_DIVERGENCE_INFO
 
 USE GLOBAL_CONSTANTS
 USE MESH_VARIABLES
-
 INTEGER :: IPZ,IOPZ,IOPZ2
 REAL(EB) :: TNOW
 
