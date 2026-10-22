@@ -9512,11 +9512,23 @@ MESH_LOOP: DO NM=1,NMESHES
          SL%K1 = NINT( GINV(XB(5)-ZS,3,NM)*RDZETA)
          SL%K2 = NINT( GINV(XB(6)-ZS,3,NM)*RDZETA)
          ! R29z: Выталкивание горизонтальных SLCF из SOLID-ячеек тонких перекрытий
-         IF (SL%K1==SL%K2 .AND. SL%I1<SL%I2 .AND. SL%J1<SL%J2) THEN
-            IC_SL = CELL_INDEX(SL%I1+1,SL%J1+1,SL%K1)
+         ! R30 fix: Guard with ASSOCIATED(M%CELL_INDEX) — in MPI mode non-local
+         ! meshes may not have CELL_INDEX allocated during READ_SLCF.
+         IF (SL%K1==SL%K2 .AND. SL%I1<SL%I2 .AND. SL%J1<SL%J2 .AND. ASSOCIATED(M%CELL_INDEX)) THEN
+            IC_SL = 0
+            IF (SL%I1+1>=0 .AND. SL%I1+1<=M%IBP1 .AND. &
+                SL%J1+1>=0 .AND. SL%J1+1<=M%JBP1 .AND. &
+                SL%K1  >=0 .AND. SL%K1  <=M%KBP1) THEN
+               IC_SL = M%CELL_INDEX(SL%I1+1,SL%J1+1,SL%K1)
+            ENDIF
             IF (IC_SL>0 .AND. M%SOLID(IC_SL)) THEN
                DO KK_SL=SL%K1-1,1,-1
-                  IC_SL = CELL_INDEX(SL%I1+1,SL%J1+1,KK_SL)
+                  IC_SL = 0
+                  IF (SL%I1+1>=0 .AND. SL%I1+1<=M%IBP1 .AND. &
+                      SL%J1+1>=0 .AND. SL%J1+1<=M%JBP1 .AND. &
+                      KK_SL  >=0 .AND. KK_SL  <=M%KBP1) THEN
+                     IC_SL = M%CELL_INDEX(SL%I1+1,SL%J1+1,KK_SL)
+                  ENDIF
                   IF (IC_SL>0 .AND. .NOT.M%SOLID(IC_SL)) THEN
                      WRITE(LU_OUTPUT,'(A,F8.3,A,I4,A,I4)') ' R29z SLCF PUSH: PBZ=',XB(5),' K=',SL%K1,'->',KK_SL
                      SL%K1 = KK_SL
