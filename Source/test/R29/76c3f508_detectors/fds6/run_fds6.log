@@ -1,0 +1,142 @@
+
+ Starting FDS ...
+
+ MPI Process      0 started on DESKTOP-GTCUM7J
+
+ Reading FDS input file ...
+
+WARNING: SPEC SPEC_1 is not in the table of pre-defined species. See the Users Guide chapter on species for the treatment of any undefined properties.
+
+ Fire Dynamics Simulator
+
+ Current Date     : October 24, 2026  01:34:34
+ Revision         : FDS-6.11.1-0-gff928db-release
+ Revision Date    : Thu Jul 9 17:24:07 2026 -0400
+ Compiler         : Intel(R) Fortran Compiler for applications running on Intel(R) 64, Version 2025.2.0 Build 20250605
+ Compilation Date : Fri-07/10/2026-01:12-PM
+
+ Number of MPI Processes:  1
+
+ MPI version: 3.1
+ MPI library version: Intel(R) MPI Library 2021.6 for Windows* OS
+
+ Hypre library version: v3.0.0
+ Sundials library version: v7.5.0
+
+ Job TITLE        : Korpus_E:_Scenarij_5
+ Job ID string    : 76c3f508
+
+ Time Step:       1, Simulation Time:   0.53222 s
+ Time Step:       2, Simulation Time:   1.06443 s
+ Time Step:       3, Simulation Time:   1.59665 s
+ Time Step:       4, Simulation Time:   1.80231 s
+ Time Step:       5, Simulation Time:   2.02854 s
+ Time Step:       6, Simulation Time:   2.19783 s
+ Time Step:       7, Simulation Time:   2.36711 s
+ Time Step:       8, Simulation Time:   2.51317 s
+ Time Step:       9, Simulation Time:   2.65923 s
+ Time Step:      10, Simulation Time:   2.78991 s
+ Time Step:      11, Simulation Time:   2.92059 s
+ Time Step:      12, Simulation Time:   3.05127 s
+ Time Step:      13, Simulation Time:   3.16640 s
+ Time Step:      14, Simulation Time:   3.28153 s
+ Time Step:      15, Simulation Time:   3.39666 s
+ Time Step:      16, Simulation Time:   3.51179 s
+ Time Step:      17, Simulation Time:   3.62692 s
+ Time Step:      18, Simulation Time:   3.74205 s
+ Time Step:      19, Simulation Time:   3.85718 s
+ Time Step:      20, Simulation Time:   3.97231 s
+ Time Step:      21, Simulation Time:   4.08744 s
+ Time Step:      22, Simulation Time:   4.21409 s
+ Time Step:      23, Simulation Time:   4.35339 s
+ Time Step:      24, Simulation Time:   4.50663 s
+ Time Step:      25, Simulation Time:   4.67519 s
+ Time Step:      26, Simulation Time:   4.84376 s
+ Time Step:      27, Simulation Time:   5.01232 s
+ Time Step:      28, Simulation Time:   5.18088 s
+ Time Step:      29, Simulation Time:   5.34944 s
+ Time Step:      30, Simulation Time:   5.51801 s
+ Time Step:      31, Simulation Time:   5.68657 s
+ Time Step:      32, Simulation Time:   5.87199 s
+ Time Step:      33, Simulation Time:   6.05741 s
+ Time Step:      34, Simulation Time:   6.26137 s
+ Time Step:      35, Simulation Time:   6.46533 s
+ Time Step:      36, Simulation Time:   6.68968 s
+ Time Step:      37, Simulation Time:   6.91404 s
+ Time Step:      38, Simulation Time:   7.13839 s
+ Time Step:      39, Simulation Time:   7.36275 s
+ Time Step:      40, Simulation Time:   7.58711 s
+ Time Step:      41, Simulation Time:   7.81146 s
+ Time Step:      42, Simulation Time:   8.03582 s
+ Time Step:      43, Simulation Time:   8.28261 s
+ Time Step:      44, Simulation Time:   8.52940 s
+ Time Step:      45, Simulation Time:   8.77620 s
+ Time Step:      46, Simulation Time:   9.02299 s
+ Time Step:      47, Simulation Time:   9.26978 s
+ Time Step:      48, Simulation Time:   9.51657 s
+ Time Step:      49, Simulation Time:   9.76336 s
+ Time Step:      50, Simulation Time:   9.96740 s
+ Time Step:      51, Simulation Time:  10.17144 s
+ Time Step:      52, Simulation Time:  10.35028 s
+ Time Step:      53, Simulation Time:  10.52911 s
+ Time Step:      54, Simulation Time:  10.70795 s
+ Time Step:      55, Simulation Time:  10.88678 s
+ Time Step:      56, Simulation Time:  11.06562 s
+ Time Step:      57, Simulation Time:  11.24445 s
+ Time Step:      58, Simulation Time:  11.40272 s
+ Time Step:      59, Simulation Time:  11.56099 s
+ Time Step:      60, Simulation Time:  11.71926 s
+ Time Step:      61, Simulation Time:  11.87753 s
+ Time Step:      62, Simulation Time:  12.05162 s
+ Time Step:      63, Simulation Time:  12.24313 s
+ Time Step:      64, Simulation Time:  12.45379 s
+ Time Step:      65, Simulation Time:  12.68551 s
+ Time Step:      66, Simulation Time:  12.94040 s
+ Time Step:      67, Simulation Time:  13.19530 s
+ Time Step:      68, Simulation Time:  13.45019 s
+ Time Step:      69, Simulation Time:  13.70509 s
+ Time Step:      70, Simulation Time:  13.95998 s
+ Time Step:      71, Simulation Time:  14.21488 s
+ Time Step:      72, Simulation Time:  14.46977 s
+ Time Step:      73, Simulation Time:  14.72467 s
+ Time Step:      74, Simulation Time:  14.97956 s
+ Time Step:      75, Simulation Time:  15.23445 s
+ Time Step:      76, Simulation Time:  15.48935 s
+ Time Step:      77, Simulation Time:  15.74424 s
+ Time Step:      78, Simulation Time:  15.99914 s
+ Time Step:      79, Simulation Time:  16.25403 s
+ Time Step:      80, Simulation Time:  16.50893 s
+ Time Step:      81, Simulation Time:  16.76382 s
+ Time Step:      82, Simulation Time:  17.01872 s
+ Time Step:      83, Simulation Time:  17.27361 s
+ Time Step:      84, Simulation Time:  17.52850 s
+ Time Step:      85, Simulation Time:  17.78340 s
+ Time Step:      86, Simulation Time:  18.01233 s
+ Time Step:      87, Simulation Time:  18.24126 s
+ Time Step:      88, Simulation Time:  18.47019 s
+ Time Step:      89, Simulation Time:  18.69912 s
+ Time Step:      90, Simulation Time:  18.92805 s
+ Time Step:      91, Simulation Time:  19.17987 s
+ Time Step:      92, Simulation Time:  19.43169 s
+ Time Step:      93, Simulation Time:  19.68351 s
+ Time Step:      94, Simulation Time:  19.93533 s
+ Time Step:      95, Simulation Time:  20.18716 s
+ Time Step:      96, Simulation Time:  20.43898 s
+ Time Step:      97, Simulation Time:  20.69080 s
+ Time Step:      98, Simulation Time:  20.94262 s
+ Time Step:      99, Simulation Time:  21.19445 s
+ Time Step:     100, Simulation Time:  21.44627 s
+ Time Step:     101, Simulation Time:  21.69809 s
+ Time Step:     102, Simulation Time:  21.94991 s
+ Time Step:     103, Simulation Time:  22.20174 s
+ Time Step:     104, Simulation Time:  22.41257 s
+ Time Step:     105, Simulation Time:  22.62341 s
+ Time Step:     106, Simulation Time:  22.83425 s
+ Time Step:     107, Simulation Time:  23.04509 s
+ Time Step:     108, Simulation Time:  23.25592 s
+ Time Step:     109, Simulation Time:  23.46676 s
+ Time Step:     110, Simulation Time:  23.69868 s
+ Time Step:     111, Simulation Time:  23.95380 s
+ Time Step:     112, Simulation Time:  24.20891 s
+
+STOP: FDS was stopped by KILL control function and completed successfully (CHID: 76c3f508)

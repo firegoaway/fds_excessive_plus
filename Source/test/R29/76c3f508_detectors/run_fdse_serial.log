@@ -1,0 +1,87 @@
+Process   0 of   0 is running on DESKTOP-GTCUM7J
+Mesh   1 is assigned to Process   0
+INFO: Extracted 6 components from PRODUCTS mixture
+  SOOT: mass_frac= 0.00233
+  CARBON DIOXIDE: mass_frac= 0.08052
+  CARBON MONOXIDE: mass_frac= 0.01320
+  HYDROGEN CHLORIDE: mass_frac= 0.00044
+  WATER VAPOR: mass_frac= 0.23875
+  NITROGEN: mass_frac= 0.66477
+ R28j: SPEC_ID_NU — выходы продуктов из PRODUCTS (кг/кг топлива):
+   SOOT:  1.977E-02
+   CARBON DIOXIDE:  6.834E-01
+   CARBON MONOXIDE:  1.120E-01
+   HYDROGEN CHLORIDE:  3.700E-03
+   WATER VAPOR:  2.026E+00
+   NITROGEN:  5.642E+00
+ R28j: O2_F_RATIO =  1.700E+00 кг/кг; трассер продуктов =  2.700E+00 кг/кг; SOOT_YIELD =  1.977E-02
+ MLR_BASED_HRR: Surface SURF_53 MLRPUA =  1.187E-01 kg/s/m2, CCC = procedural(T,O2)
+ NOTE(R29z2): FORCED dynamic Q limit: DT_TARGET=0.05 s, CFL_TARGET= 0.80 (HRRPUA_MAX=7.339E+02 W/m2)
+
+ Fire Dynamics Simulator
+
+ Compilation Date : null
+
+ Version: EXCESSIVE+ R29p; MPI Enabled; OpenMP Disabled
+ SVN Revision No. :    0
+
+ Job TITLE        : Korpus_E:_Scenarij_5
+ Job ID string    : 76c3f508
+
+ Time Step:      1,    Simulation Time:      0.53 s
+ Time Step:      2,    Simulation Time:      1.05 s
+ Time Step:      3,    Simulation Time:      1.58 s
+ Time Step:      4,    Simulation Time:      2.11 s
+ Time Step:      5,    Simulation Time:      2.56 s
+ Time Step:      6,    Simulation Time:      3.02 s
+ Time Step:      7,    Simulation Time:      3.47 s
+ Time Step:      8,    Simulation Time:      3.92 s
+ Time Step:      9,    Simulation Time:      4.32 s
+ Time Step:     10,    Simulation Time:      4.72 s
+ Time Step:     11,    Simulation Time:      5.11 s
+ Time Step:     12,    Simulation Time:      5.51 s
+ Time Step:     13,    Simulation Time:      5.91 s
+ Time Step:     14,    Simulation Time:      6.30 s
+ Time Step:     15,    Simulation Time:      6.70 s
+ Time Step:     16,    Simulation Time:      7.10 s
+ Time Step:     17,    Simulation Time:      7.50 s
+ Time Step:     18,    Simulation Time:      7.89 s
+ Time Step:     19,    Simulation Time:      8.29 s
+ Time Step:     20,    Simulation Time:      8.69 s
+ Time Step:     21,    Simulation Time:      9.08 s
+ Time Step:     22,    Simulation Time:      9.48 s
+ Time Step:     23,    Simulation Time:      9.88 s
+ Time Step:     24,    Simulation Time:     10.27 s
+ Time Step:     25,    Simulation Time:     10.67 s
+ Time Step:     26,    Simulation Time:     11.07 s
+ Time Step:     27,    Simulation Time:     11.46 s
+ Time Step:     28,    Simulation Time:     11.86 s
+ Time Step:     29,    Simulation Time:     12.26 s
+ Time Step:     30,    Simulation Time:     12.69 s
+ Time Step:     31,    Simulation Time:     13.13 s
+ Time Step:     32,    Simulation Time:     13.56 s
+ Time Step:     33,    Simulation Time:     14.00 s
+ Time Step:     34,    Simulation Time:     14.44 s
+ Time Step:     35,    Simulation Time:     14.87 s
+ Time Step:     36,    Simulation Time:     15.31 s
+ Time Step:     37,    Simulation Time:     15.75 s
+ Time Step:     38,    Simulation Time:     16.18 s
+ Time Step:     39,    Simulation Time:     16.62 s
+ Time Step:     40,    Simulation Time:     17.06 s
+ Time Step:     41,    Simulation Time:     17.49 s
+ Time Step:     42,    Simulation Time:     17.93 s
+ Time Step:     43,    Simulation Time:     18.36 s
+ Time Step:     44,    Simulation Time:     18.80 s
+ Time Step:     45,    Simulation Time:     19.24 s
+ Time Step:     46,    Simulation Time:     19.67 s
+ Time Step:     47,    Simulation Time:     20.11 s
+ Time Step:     48,    Simulation Time:     20.55 s
+ Time Step:     49,    Simulation Time:     20.98 s
+ Time Step:     50,    Simulation Time:     21.42 s
+ Time Step:     51,    Simulation Time:     21.86 s
+ Time Step:     52,    Simulation Time:     22.29 s
+ Time Step:     53,    Simulation Time:     22.73 s
+ Time Step:     54,    Simulation Time:     23.16 s
+ Time Step:     55,    Simulation Time:     23.60 s
+
+STOP: FDS was stopped by KILL control function and completed successfully (CHID: 76c3f508)

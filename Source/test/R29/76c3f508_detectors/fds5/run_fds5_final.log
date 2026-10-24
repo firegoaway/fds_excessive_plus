@@ -1,0 +1,28 @@
+
+ Fire Dynamics Simulator
+
+ Compilation Date : Fri, 29 Oct 2010
+
+ Version: 5.5.3; MPI Disabled; OpenMP Disabled
+ SVN Revision No. : 7031
+
+ Job TITLE        : Korpus_E:_Scenarij_5
+ Job ID string    : 76c3f508
+
+ Time Step:      1,    Simulation Time:      0.53 s
+ Time Step:      2,    Simulation Time:      1.05 s
+ Time Step:      3,    Simulation Time:      1.58 s
+ Time Step:      4,    Simulation Time:      2.11 s
+ Time Step:      5,    Simulation Time:      2.56 s
+ Time Step:      6,    Simulation Time:      3.02 s
+ Time Step:      7,    Simulation Time:      3.47 s
+ Time Step:      8,    Simulation Time:      3.92 s
+ Time Step:      9,    Simulation Time:      4.32 s
+ Time Step:     10,    Simulation Time:      4.72 s
+ Time Step:     20,    Simulation Time:      8.69 s
+ Time Step:     30,    Simulation Time:     12.65 s
+ Time Step:     40,    Simulation Time:     17.02 s
+ Time Step:     50,    Simulation Time:     21.38 s
+ Time Step:     60,    Simulation Time:     25.74 s
+
+STOP: FDS stopped by user
