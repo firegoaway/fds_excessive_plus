@@ -1,0 +1,215 @@
+{
+ "name": "Дмитрий",
+ "type": "personal_chat",
+ "id": 705347341,
+ "messages": [
+  {
+   "id": 249728,
+   "type": "message",
+   "date": "2026-10-25T12:46:19",
+   "date_unixtime": "1792921579",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "file": "files/3b73dde1.fds",
+   "file_name": "3b73dde1.fds",
+   "file_size": 97774,
+   "mime_type": "text/plain",
+   "text": "",
+   "text_entities": []
+  },
+  {
+   "id": 249729,
+   "type": "message",
+   "date": "2026-10-25T12:46:19",
+   "date_unixtime": "1792921579",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "file": "files/3b73dde1_nfs.fds",
+   "file_name": "3b73dde1_nfs.fds",
+   "file_size": 91169,
+   "mime_type": "text/plain",
+   "text": "",
+   "text_entities": []
+  },
+  {
+   "id": 249730,
+   "type": "message",
+   "date": "2026-10-25T12:46:21",
+   "date_unixtime": "1792921581",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "file": "files/3b73dde1_nfs_tout.fds",
+   "file_name": "3b73dde1_nfs_tout.fds",
+   "file_size": 1077265,
+   "mime_type": "text/plain",
+   "text": "сценарий, посчитанный в Змейке",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "сценарий, посчитанный в Змейке"
+    }
+   ]
+  },
+  {
+   "id": 249731,
+   "type": "message",
+   "date": "2026-10-25T12:47:04",
+   "date_unixtime": "1792921624",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "file": "files/fc11291b_detectors.fds",
+   "file_name": "fc11291b_detectors.fds",
+   "file_size": 97572,
+   "mime_type": "text/plain",
+   "text": "он же, посчитанный в сборке",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "он же, посчитанный в сборке"
+    }
+   ]
+  },
+  {
+   "id": 249732,
+   "type": "message",
+   "date": "2026-10-25T12:47:15",
+   "date_unixtime": "1792921635",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "text": "привет",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "привет"
+    }
+   ]
+  },
+  {
+   "id": 249733,
+   "type": "message",
+   "date": "2026-10-25T12:48:06",
+   "date_unixtime": "1792921686",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "text": "изменены только инструменты (поставлен извещатель, ну и остальные мелочи Феникса), извещатель не срабатывает",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "изменены только инструменты (поставлен извещатель, ну и остальные мелочи Феникса), извещатель не срабатывает"
+    }
+   ]
+  },
+  {
+   "id": 249734,
+   "type": "message",
+   "date": "2026-10-25T12:54:48",
+   "date_unixtime": "1792922088",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "text": "в качестве эксперимента, ставил линейники и тепловые на разной высоте (0,1-0,2 от низа перекрытия), сработал только тепловой.  Может я что-то лишнее делаю? в чем может быть \"затык\"?",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "в качестве эксперимента, ставил линейники и тепловые на разной высоте (0,1-0,2 от низа перекрытия), сработал только тепловой.  Может я что-то лишнее делаю? в чем может быть \"затык\"?"
+    }
+   ]
+  },
+  {
+   "id": 249735,
+   "type": "message",
+   "date": "2026-10-25T13:10:46",
+   "date_unixtime": "1792923046",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "file": "files/image_2026-10-25_13-10-44.png",
+   "file_name": "image_2026-10-25_13-10-44.png",
+   "file_size": 6935,
+   "mime_type": "image/png",
+   "width": 796,
+   "height": 29,
+   "text": "внезапно дымовой решил сработать на 2-ой секунде)",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "внезапно дымовой решил сработать на 2-ой секунде)"
+    }
+   ]
+  },
+  {
+   "id": 249736,
+   "type": "message",
+   "date": "2026-10-25T13:17:43",
+   "date_unixtime": "1792923463",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "photo": "photos/photo_36@25-10-2026_13-17-43.jpg",
+   "photo_file_size": 100902,
+   "width": 981,
+   "height": 618,
+   "text": "чет какая-то непонятка...",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "чет какая-то непонятка..."
+    }
+   ]
+  },
+  {
+   "id": 249737,
+   "type": "message",
+   "date": "2026-10-25T13:21:13",
+   "date_unixtime": "1792923673",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "text": "что только не делал, сработка на 1,26 с.",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "что только не делал, сработка на 1,26 с."
+    }
+   ]
+  },
+  {
+   "id": 249738,
+   "type": "message",
+   "date": "2026-10-25T13:21:58",
+   "date_unixtime": "1792923718",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "file": "files/image_2026-10-25_13-21-57.png",
+   "file_name": "image_2026-10-25_13-21-57.png",
+   "file_size": 12915,
+   "mime_type": "image/png",
+   "width": 812,
+   "height": 35,
+   "text": "тепловой при этом срабатывает адекватно вроде бы",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "тепловой при этом срабатывает адекватно вроде бы"
+    }
+   ]
+  },
+  {
+   "id": 249739,
+   "type": "message",
+   "date": "2026-10-25T13:26:54",
+   "date_unixtime": "1792924014",
+   "from": "Дмитрий Свиридов",
+   "from_id": "user705347341",
+   "file": "files/image_2026-10-25_13-26-53.png",
+   "file_name": "image_2026-10-25_13-26-53.png",
+   "file_size": 13376,
+   "mime_type": "image/png",
+   "width": 806,
+   "height": 31,
+   "text": "сработка на обычном фдс",
+   "text_entities": [
+    {
+     "type": "plain",
+     "text": "сработка на обычном фдс"
+    }
+   ]
+  }
+ ]
+}
