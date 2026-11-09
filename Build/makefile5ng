@@ -130,7 +130,7 @@ main.o: FFLAGS += $(FOPENMPFLAGS)
 
 fds5_impi_intel_win : MPILIB = "$(I_MPI_ROOT)\lib\impi.lib"
 fds5_impi_intel_win : MPIINCLUDE = "$(I_MPI_ROOT)\include\mpi"
-fds5_impi_intel_win : FFLAGS = -D_WIN32 /Qipo /O2 /I$(MPIINCLUDE) /I"$(I_MPI_ROOT)\include" /wrap-margin- $(GITINFO) $(FFLAGSMKL)
+fds5_impi_intel_win : FFLAGS = -D_WIN32 /O2 /I$(MPIINCLUDE) /I"$(I_MPI_ROOT)\include" /wrap-margin- $(GITINFO) $(FFLAGSMKL)
 fds5_impi_intel_win : EVACOMP =
 fds5_impi_intel_win : FCOMPL = ifx
 fds5_impi_intel_win : CCOMPL = icx
@@ -154,7 +154,7 @@ fds5_impi_intel_win_db : setup_win $(obj_mpi5)
 # Отдельное имя/каталог — релизный fds5_impi_intel_win.exe не пересобирается.
 fds5_impi_intel_win_tele : MPILIB = "$(I_MPI_ROOT)\lib\impi.lib"
 fds5_impi_intel_win_tele : MPIINCLUDE = "$(I_MPI_ROOT)\include\mpi"
-fds5_impi_intel_win_tele : FFLAGS = -D_WIN32 /Qipo /O2 /I$(MPIINCLUDE) /I"$(I_MPI_ROOT)\include" /wrap-margin- $(GITINFO) $(FFLAGSMKL)
+fds5_impi_intel_win_tele : FFLAGS = -D_WIN32 /O2 /I$(MPIINCLUDE) /I"$(I_MPI_ROOT)\include" /wrap-margin- $(GITINFO) $(FFLAGSMKL)
 fds5_impi_intel_win_tele : EVACOMP =
 fds5_impi_intel_win_tele : FCOMPL = ifx
 fds5_impi_intel_win_tele : CCOMPL = icx
