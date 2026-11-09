@@ -2616,6 +2616,12 @@ IF (REMOVE) THEN
          DO I=I1+1,I2
             RHOS(I,J,K) = RHOA
             RHO(I,J,K)  = RHOA
+            TMP(I,J,K)  = TMPA
+            HS(I,J,K)   = 0.0_EB
+            US(I,J,K)   = 0.0_EB
+            WS(I,J,K)   = 0.0_EB
+            KRES(I,J,K) = 0.0_EB
+            VOLUME_FACTOR(I,J,K) = 1.0_EB
             IF (N_SPECIES>0) THEN
                YY(I,J,K,1:N_SPECIES)  = SPECIES(1:N_SPECIES)%YY0
                YYS(I,J,K,1:N_SPECIES) = SPECIES(1:N_SPECIES)%YY0
@@ -2734,6 +2740,8 @@ INTEGER :: I_OBST,IBC,IOR,IIG,JJG,KKG,IW_OLD,IBC_OLD
 IF (IW==0) RETURN
 
 IBC = IJKW(5,IW)
+
+IF (REMOVE) ALPHA_CF_W(IW) = 1.0_EB
 
 IF (IW<=NEWC .AND. REMOVE) THEN
    BOUNDARY_TYPE(IW) = SOLID_BOUNDARY
